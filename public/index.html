@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Outreach → SalesRobot Sync</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans">
+
+  <!-- Header -->
+  <div class="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-semibold text-gray-900">Outreach → SalesRobot</h1>
+      <p class="text-xs text-gray-500">Sync LinkedIn tasks to SalesRobot campaigns automatically</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <select id="profileSelect" onchange="onProfileSelect()"
+        class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="">— new session —</option>
+      </select>
+      <button id="deleteProfileBtn" onclick="deleteProfile()"
+        class="hidden text-xs text-red-500 hover:text-red-700 px-2 py-1">Delete</button>
+    </div>
+  </div>
+
+  <div class="max-w-2xl mx-auto px-4 py-8 space-y-6">
+
+    <!-- Step 1: Connect accounts -->
+    <div id="step1" class="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+      <h2 class="text-base font-semibold text-gray-900 flex items-center gap-2">
+        <span class="w-6 h-6 bg-indigo-600 text-white text-xs font-bold rounded-full flex items-center justify-center">1</span>
+        Connect your accounts
+      </h2>
+
+      <!-- Outreach section -->
+      <div class="space-y-3">
+        <h3 class="text-sm font-medium text-gray-700">Outreach.io</h3>
+
+        <!-- OAuth credentials -->
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Client ID</label>
+            <input id="outreachClientId" type="text" placeholder="From Outreach app settings"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Client Secret</label>
+            <input id="outreachClientSecret" type="password" placeholder="••••••••"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Redirect URI</label>
+          <div class="flex gap-2">
+            <input id="outreachRedirectUri" type="text"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="https://your-app.onrender.com/oauth/callback" />
+            <button onclick="useLocalRedirectUri()" class="text-xs text-indigo-600 hover:underline whitespace-nowrap px-1">Use localhost</button>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Must match exactly what's registered in your Outreach app. <a href="https://developers.outreach.io" target="_blank" class="text-indigo-500 hover:underline">Register app →</a></p>
+        </div>
+
+        <!-- Connect button + status -->
+        <div class="flex items-center gap-3">
+          <button id="connectOutreachBtn" onclick="connectOutreach()"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
+            Connect Outreach
+          </button>
+          <span id="outreachStatus" class="text-sm text-gray-400">Not connected</span>
+        </div>
+        <p id="outreachError" class="text-xs text-red-500 hidden"></p>
+
+        <!-- Outreach user picker (shown after connect) -->
+        <div id="outreachUserRow" class="hidden space-y-2 pt-1">
+          <div class="flex items-center justify-between">
+            <label class="text-sm font-medium text-gray-700">Which Outreach user are you?</label>
+            <button onclick="detectOutreachUsers()" id="detectUsersBtn"
+              class="text-xs text-indigo-600 hover:underline">Detect</button>
+          </div>
+          <select id="outreachUserSelect" onchange="onUserSelect()"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="">— click Detect to load users —</option>
+          </select>
+          <p id="outreachUserMsg" class="text-xs text-gray-400">Required for accurate task filtering.</p>
+        </div>
+      </div>
+
+      <hr class="border-gray-100" />
+
+      <!-- SalesRobot section -->
+      <div class="space-y-3">
+        <h3 class="text-sm font-medium text-gray-700">SalesRobot</h3>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">API Key</label>
+          <input id="srKey" type="password" placeholder="Your SalesRobot API key"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+      </div>
+
+      <!-- Save / Update profile -->
+      <div id="profileNameRow" class="hidden space-y-2 pt-1 border-t border-gray-100">
+        <label class="block text-sm font-medium text-gray-700">Save as profile</label>
+        <div class="flex gap-2">
+          <input id="profileNameInput" type="text" placeholder="e.g. Peter, Maria…"
+            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div class="flex gap-2">
+          <input id="profileSavePassword" type="password" placeholder="Set a profile password"
+            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <button onclick="saveProfile()"
+            class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition-colors">
+            Save
+          </button>
+        </div>
+        <p id="saveProfileMsg" class="text-xs mt-1 hidden"></p>
+      </div>
+
+      <div id="profileUpdateRow" class="hidden space-y-2 pt-1 border-t border-gray-100">
+        <label class="block text-sm font-medium text-gray-700">Update profile</label>
+        <div class="flex gap-2">
+          <input id="profileUpdatePassword" type="password" placeholder="Enter your profile password to save changes"
+            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          <button onclick="updateProfile()"
+            class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition-colors">
+            Update
+          </button>
+        </div>
+        <p id="updateProfileMsg" class="text-xs mt-1 hidden"></p>
+      </div>
+
+      <!-- Connect all button -->
+      <button id="connectBtn" onclick="connectAccounts()"
+        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+        Connect &amp; Verify
+      </button>
+      <p id="step1Error" class="text-sm text-red-500 hidden"></p>
+      <div id="step1Success" class="hidden text-sm text-green-600 font-medium">Connected successfully</div>
+    </div>
+
+    <!-- Step 2: Select campaigns -->
+    <div id="step2" class="bg-white rounded-xl border border-gray-200 p-6 space-y-5 opacity-50 pointer-events-none">
+      <h2 class="text-base font-semibold text-gray-900 flex items-center gap-2">
+        <span class="w-6 h-6 bg-indigo-600 text-white text-xs font-bold rounded-full flex items-center justify-center">2</span>
+        Select LinkedIn account &amp; campaigns
+      </h2>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">LinkedIn Account (SalesRobot)</label>
+          <select id="linkedinAccountSelect" onchange="onAccountSelect()"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="">— select account —</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Connect Request Campaign</label>
+            <select id="connectCampaignSelect"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="">— select account first —</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Message Campaign</label>
+            <select id="messageCampaignSelect"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="">— select account first —</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Auto-sync row -->
+      <div id="autoSyncRow" class="hidden pt-2 border-t border-gray-100 flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-700">Auto-sync</p>
+          <p class="text-xs text-gray-400">Automatically sync new LinkedIn tasks every 30 minutes</p>
+          <p id="autoSyncStatus" class="text-xs text-gray-400 mt-1"></p>
+        </div>
+        <button id="autoSyncBtn" onclick="toggleAutoSync()"
+          class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors">
+          Enable
+        </button>
+      </div>
+
+      <p id="step2Error" class="text-sm text-red-500 hidden"></p>
+    </div>
+
+    <!-- Step 3: Fetch & sync tasks -->
+    <div id="step3" class="bg-white rounded-xl border border-gray-200 p-6 space-y-5 opacity-50 pointer-events-none">
+      <h2 class="text-base font-semibold text-gray-900 flex items-center gap-2">
+        <span class="w-6 h-6 bg-indigo-600 text-white text-xs font-bold rounded-full flex items-center justify-center">3</span>
+        Sync tasks to SalesRobot
+      </h2>
+
+      <button id="fetchTasksBtn" onclick="fetchTasks()"
+        class="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2.5 rounded-lg text-sm transition-colors">
+        Fetch my LinkedIn tasks from Outreach
+      </button>
+
+      <div id="taskList" class="hidden space-y-2"></div>
+
+      <div id="syncActions" class="hidden space-y-3">
+        <div class="flex items-center justify-between text-sm">
+          <span id="taskSummary" class="text-gray-500"></span>
+          <label class="flex items-center gap-2 text-gray-600">
+            <input type="checkbox" id="markCompleteCheck" checked
+              class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+            Mark complete in Outreach after sync
+          </label>
+        </div>
+        <button id="syncBtn" onclick="syncTasks()"
+          class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+          Sync to SalesRobot
+        </button>
+        <p id="step3Error" class="text-sm text-red-500 hidden"></p>
+      </div>
+
+      <!-- Sync results -->
+      <div id="syncResults" class="hidden space-y-3">
+        <div id="syncSummary" class="text-sm font-medium"></div>
+        <div id="syncResultList" class="space-y-1 max-h-80 overflow-y-auto"></div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div id="historySection" class="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+      <h2 class="text-base font-semibold text-gray-900">Sync history</h2>
+      <div id="historyList" class="space-y-2 text-sm text-gray-500">Loading…</div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── State ─────────────────────────────────────────────────────────────────
+    let state = {
+      srKey: '',
+      outreachClientId: '', outreachClientSecret: '', outreachRedirectUri: '',
+      outreachAccessToken: null, outreachRefreshToken: null, outreachTokenExpiry: null,
+      outreachUserId: null, outreachUserName: '',
+      linkedinAccountUuid: '', linkedinAccountName: '',
+      connectCampaignUuid: '', connectCampaignName: '',
+      messageCampaignUuid: '', messageCampaignName: '',
+      currentProfileId: null,
+      tasks: [],
+    };
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function escHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function showError(id, msg) {
+      const el = document.getElementById(id);
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 8000);
+    }
+    function enableStep(id) {
+      const el = document.getElementById(id);
+      el.classList.remove('opacity-50', 'pointer-events-none');
+    }
+
+    // ── Profile management ────────────────────────────────────────────────────
+    async function loadProfiles() {
+      try {
+        const res = await fetch('/api/profiles');
+        const data = await res.json();
+        const sel = document.getElementById('profileSelect');
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">— new session —</option>' +
+          (data.profiles || []).map(p =>
+            `<option value="${escHtml(p.id)}">${escHtml(p.name)}</option>`
+          ).join('');
+        if (state.currentProfileId) sel.value = state.currentProfileId;
+      } catch { /* ignore */ }
+    }
+
+    function onProfileSelect() {
+      const sel = document.getElementById('profileSelect');
+      const id = sel.value;
+      // Clear keys
+      document.getElementById('outreachClientId').value = '';
+      document.getElementById('outreachClientSecret').value = '';
+      document.getElementById('outreachRedirectUri').value = '';
+      document.getElementById('srKey').value = '';
+      state.currentProfileId = null;
+      state.outreachAccessToken = null;
+      state.outreachUserId = null;
+      state.outreachUserName = '';
+      document.getElementById('outreachStatus').textContent = 'Not connected';
+      document.getElementById('outreachStatus').className = 'text-sm text-gray-400';
+      document.getElementById('outreachUserRow').classList.add('hidden');
+      document.getElementById('profileNameRow').classList.add('hidden');
+      document.getElementById('profileUpdateRow').classList.add('hidden');
+
+      if (!id) {
+        document.getElementById('profileUnlockRow')?.classList.add('hidden');
+        document.getElementById('deleteProfileBtn').classList.add('hidden');
+        return;
+      }
+
+      // Show unlock row
+      let unlockRow = document.getElementById('profileUnlockRow');
+      if (!unlockRow) {
+        unlockRow = document.createElement('div');
+        unlockRow.id = 'profileUnlockRow';
+        unlockRow.className = 'space-y-2 mt-3';
+        unlockRow.innerHTML = `
+          <div class="flex gap-2">
+            <input id="profilePasswordInput" type="password" placeholder="Profile password"
+              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              onkeydown="if(event.key==='Enter')unlockProfile()" />
+            <button onclick="unlockProfile()"
+              class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg">
+              Unlock
+            </button>
+          </div>
+          <p id="profileUnlockError" class="text-xs text-red-500 hidden"></p>
+        `;
+        document.getElementById('connectBtn').parentElement.insertBefore(unlockRow, document.getElementById('connectBtn'));
+      }
+      unlockRow.classList.remove('hidden');
+      document.getElementById('deleteProfileBtn').classList.remove('hidden');
+    }
+
+    async function unlockProfile() {
+      const id = document.getElementById('profileSelect').value;
+      const password = document.getElementById('profilePasswordInput').value;
+      if (!password) return;
+
+      const res = await fetch(`/api/profiles/${id}/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        document.getElementById('profileUnlockError').textContent = data.error;
+        document.getElementById('profileUnlockError').classList.remove('hidden');
+        return;
+      }
+
+      // Populate fields
+      document.getElementById('outreachClientId').value = data.outreachClientId || '';
+      document.getElementById('outreachClientSecret').value = data.outreachClientSecret || '';
+      document.getElementById('outreachRedirectUri').value = data.outreachRedirectUri || '';
+      document.getElementById('srKey').value = data.srKey || '';
+      document.getElementById('profilePasswordInput').value = '';
+      document.getElementById('profileUnlockRow').classList.add('hidden');
+
+      state.currentProfileId     = id;
+      state.outreachAccessToken  = data.outreachAccessToken || null;
+      state.outreachRefreshToken = data.outreachRefreshToken || null;
+      state.outreachTokenExpiry  = data.outreachTokenExpiry || null;
+      state.outreachUserId       = data.outreachUserId || null;
+      state.outreachUserName     = data.outreachUserName || '';
+
+      if (data.outreachAccessToken) {
+        document.getElementById('outreachStatus').textContent = 'Token loaded';
+        document.getElementById('outreachStatus').className = 'text-sm text-green-600';
+        document.getElementById('outreachUserRow').classList.remove('hidden');
+        if (data.outreachUserId) {
+          const sel = document.getElementById('outreachUserSelect');
+          sel.innerHTML = `<option value="${escHtml(data.outreachUserId)}" selected>${escHtml(data.outreachUserName || data.outreachUserId)}</option>`;
+        }
+      }
+    }
+
+    async function saveProfile() {
+      const name     = document.getElementById('profileNameInput').value.trim();
+      const password = document.getElementById('profileSavePassword').value;
+      const msgEl    = document.getElementById('saveProfileMsg');
+      if (!name || !password) {
+        msgEl.textContent = 'Profile name and password are required.';
+        msgEl.className = 'text-xs mt-1 text-red-500';
+        msgEl.classList.remove('hidden');
+        return;
+      }
+      if (!state.outreachAccessToken) {
+        msgEl.textContent = 'Connect Outreach first before saving.';
+        msgEl.className = 'text-xs mt-1 text-red-500';
+        msgEl.classList.remove('hidden');
+        return;
+      }
+      try {
+        const res = await fetch('/api/profiles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            password,
+            srKey: state.srKey,
+            outreachClientId: state.outreachClientId,
+            outreachClientSecret: state.outreachClientSecret,
+            outreachRedirectUri: state.outreachRedirectUri,
+            outreachAccessToken: state.outreachAccessToken,
+            outreachRefreshToken: state.outreachRefreshToken,
+            outreachTokenExpiry: state.outreachTokenExpiry,
+            outreachUserId: state.outreachUserId,
+            outreachUserName: state.outreachUserName,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        state.currentProfileId = data.id;
+        document.getElementById('profileNameInput').value = '';
+        document.getElementById('profileSavePassword').value = '';
+        document.getElementById('autoSyncRow').classList.remove('hidden');
+        checkAutoSyncStatus();
+        msgEl.textContent = `Profile "${name}" saved!`;
+        msgEl.className = 'text-xs mt-1 text-green-600';
+        msgEl.classList.remove('hidden');
+        await loadProfiles();
+        document.getElementById('profileSelect').value = data.id;
+        document.getElementById('deleteProfileBtn').classList.remove('hidden');
+        document.getElementById('profileNameRow').classList.add('hidden');
+        setTimeout(() => msgEl.classList.add('hidden'), 3000);
+      } catch (e) {
+        msgEl.textContent = e.message;
+        msgEl.className = 'text-xs mt-1 text-red-500';
+        msgEl.classList.remove('hidden');
+      }
+    }
+
+    async function updateProfile() {
+      const password = document.getElementById('profileUpdatePassword').value;
+      const msgEl    = document.getElementById('updateProfileMsg');
+      if (!password) {
+        msgEl.textContent = 'Password required.';
+        msgEl.className = 'text-xs mt-1 text-red-500';
+        msgEl.classList.remove('hidden');
+        return;
+      }
+      try {
+        const res = await fetch(`/api/profiles/${state.currentProfileId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password,
+            outreachUserId: state.outreachUserId,
+            outreachUserName: state.outreachUserName,
+            outreachAccessToken: state.outreachAccessToken,
+            outreachRefreshToken: state.outreachRefreshToken,
+            outreachTokenExpiry: state.outreachTokenExpiry,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        document.getElementById('profileUpdatePassword').value = '';
+        msgEl.textContent = 'Profile updated!';
+        msgEl.className = 'text-xs mt-1 text-green-600';
+        msgEl.classList.remove('hidden');
+        setTimeout(() => msgEl.classList.add('hidden'), 3000);
+      } catch (e) {
+        msgEl.textContent = e.message;
+        msgEl.className = 'text-xs mt-1 text-red-500';
+        msgEl.classList.remove('hidden');
+      }
+    }
+
+    async function deleteProfile() {
+      const id = document.getElementById('profileSelect').value;
+      if (!id) return;
+      const password = prompt('Enter your profile password to confirm deletion:');
+      if (!password) return;
+      const res = await fetch(`/api/profiles/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'Could not delete profile');
+      state.currentProfileId = null;
+      document.getElementById('outreachClientId').value = '';
+      document.getElementById('outreachClientSecret').value = '';
+      document.getElementById('srKey').value = '';
+      document.getElementById('profileSelect').value = '';
+      document.getElementById('deleteProfileBtn').classList.add('hidden');
+      await loadProfiles();
+    }
+
+    // ── Outreach OAuth ────────────────────────────────────────────────────────
+    function useLocalRedirectUri() {
+      document.getElementById('outreachRedirectUri').value = `${location.origin}/oauth/callback`;
+    }
+
+    async function connectOutreach() {
+      const clientId     = document.getElementById('outreachClientId').value.trim();
+      const clientSecret = document.getElementById('outreachClientSecret').value.trim();
+      const redirectUri  = document.getElementById('outreachRedirectUri').value.trim();
+
+      const errEl = document.getElementById('outreachError');
+      errEl.classList.add('hidden');
+
+      if (!clientId || !clientSecret || !redirectUri) {
+        errEl.textContent = 'Client ID, Client Secret, and Redirect URI are all required.';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      // Store in state for use after callback
+      state.outreachClientId     = clientId;
+      state.outreachClientSecret = clientSecret;
+      state.outreachRedirectUri  = redirectUri;
+
+      // Initiate OAuth
+      const res = await fetch('/api/oauth/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, redirectUri }),
+      });
+      const { url, state: oauthState, error } = await res.json();
+      if (error) { errEl.textContent = error; errEl.classList.remove('hidden'); return; }
+
+      document.getElementById('outreachStatus').textContent = 'Waiting for authorization…';
+      document.getElementById('outreachStatus').className = 'text-sm text-yellow-600';
+
+      // Store state for later
+      window._outreachOauthState = oauthState;
+
+      // Open popup
+      const popup = window.open(url, 'outreach_oauth', 'width=600,height=700,left=200,top=100');
+
+      // Poll for callback redirect (popup returns to /?oauth_code=...&oauth_state=...)
+      const poll = setInterval(async () => {
+        if (popup?.closed) {
+          clearInterval(poll);
+          // Check if the main window has the code in the URL (popup redirected here)
+        }
+        try {
+          const popupUrl = popup?.location?.href || '';
+          if (popupUrl.includes('oauth_code=')) {
+            clearInterval(poll);
+            const params = new URL(popupUrl).searchParams;
+            const code = params.get('oauth_code');
+            const returnedState = params.get('oauth_state');
+            popup.close();
+            await handleOAuthCode(code, returnedState);
+          }
+        } catch { /* cross-origin, ignore until redirect */ }
+      }, 500);
+    }
+
+    // Handle code from URL (for same-window redirect flow)
+    async function handleOAuthCodeFromUrl() {
+      const params = new URLSearchParams(location.search);
+      const code  = params.get('oauth_code');
+      const oauthState = params.get('oauth_state');
+      if (!code) return;
+      // Clean URL
+      window.history.replaceState({}, '', '/');
+      await handleOAuthCode(code, oauthState);
+    }
+
+    async function handleOAuthCode(code, oauthState) {
+      const errEl = document.getElementById('outreachError');
+      errEl.classList.add('hidden');
+
+      if (!state.outreachClientId || !state.outreachClientSecret || !state.outreachRedirectUri) {
+        errEl.textContent = 'OAuth credentials lost — please re-enter Client ID, Secret, and Redirect URI then click Connect again.';
+        errEl.classList.remove('hidden');
+        document.getElementById('outreachStatus').textContent = 'Authorization failed';
+        document.getElementById('outreachStatus').className = 'text-sm text-red-500';
+        return;
+      }
+
+      try {
+        document.getElementById('outreachStatus').textContent = 'Exchanging token…';
+        const res = await fetch('/api/oauth/exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            state: oauthState,
+            clientId: state.outreachClientId,
+            clientSecret: state.outreachClientSecret,
+            redirectUri: state.outreachRedirectUri,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.accessToken) throw new Error(data.error || 'Token exchange failed');
+
+        state.outreachAccessToken  = data.accessToken;
+        state.outreachRefreshToken = data.refreshToken;
+        state.outreachTokenExpiry  = data.expiresAt;
+
+        document.getElementById('outreachStatus').textContent = 'Connected';
+        document.getElementById('outreachStatus').className = 'text-sm text-green-600';
+        document.getElementById('outreachUserRow').classList.remove('hidden');
+      } catch (e) {
+        document.getElementById('outreachStatus').textContent = 'Authorization failed';
+        document.getElementById('outreachStatus').className = 'text-sm text-red-500';
+        errEl.textContent = e.message;
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    async function detectOutreachUsers() {
+      const btn  = document.getElementById('detectUsersBtn');
+      const sel  = document.getElementById('outreachUserSelect');
+      const msgEl = document.getElementById('outreachUserMsg');
+      if (!state.outreachAccessToken) {
+        msgEl.textContent = 'Connect Outreach first.';
+        return;
+      }
+      btn.textContent = 'Loading…';
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/outreach/detect-users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: state.outreachAccessToken }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        const users = data.users || [];
+        if (!users.length) {
+          msgEl.textContent = 'No users found. Make sure you have tasks in Outreach.';
+          return;
+        }
+        sel.innerHTML = '<option value="">— select yourself —</option>' +
+          users.map(u => `<option value="${escHtml(u.id)}" data-name="${escHtml(u.name)}">${escHtml(u.name)}${u.email ? ' (' + escHtml(u.email) + ')' : ''}</option>`).join('');
+        msgEl.textContent = `${users.length} user${users.length !== 1 ? 's' : ''} found. Select yourself.`;
+      } catch (e) {
+        msgEl.textContent = e.message;
+      } finally {
+        btn.textContent = 'Detect';
+        btn.disabled = false;
+      }
+    }
+
+    function onUserSelect() {
+      const sel = document.getElementById('outreachUserSelect');
+      const opt = sel.options[sel.selectedIndex];
+      state.outreachUserId   = sel.value || null;
+      state.outreachUserName = opt?.dataset.name || '';
+    }
+
+    // ── Step 1: Connect & verify ──────────────────────────────────────────────
+    async function connectAccounts() {
+      const errEl = document.getElementById('step1Error');
+      errEl.classList.add('hidden');
+
+      state.srKey = document.getElementById('srKey').value.trim();
+
+      if (!state.outreachAccessToken) {
+        return showError('step1Error', 'Connect Outreach first (enter credentials and click Connect Outreach).');
+      }
+      if (!state.srKey) {
+        return showError('step1Error', 'Enter your SalesRobot API key.');
+      }
+
+      const btn = document.getElementById('connectBtn');
+      btn.disabled = true;
+      btn.textContent = 'Verifying…';
+
+      try {
+        // Verify SalesRobot by fetching accounts
+        const srRes = await fetch('/api/salesrobot/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ srKey: state.srKey }),
+        });
+        const srData = await srRes.json();
+        if (!srRes.ok) throw new Error(srData.error || 'SalesRobot connection failed');
+
+        // Populate LinkedIn account selector
+        const accounts = srData.accounts || [];
+        const accSel = document.getElementById('linkedinAccountSelect');
+        accSel.innerHTML = '<option value="">— select account —</option>' +
+          accounts.map(a =>
+            `<option value="${escHtml(a.uuid)}" data-name="${escHtml(a.name)}">${escHtml(a.name)}${a.cookieExpired ? ' (cookie expired)' : ''}</option>`
+          ).join('');
+
+        // Show success + step 2
+        document.getElementById('step1Success').classList.remove('hidden');
+        document.getElementById('outreachUserRow').classList.remove('hidden');
+        enableStep('step2');
+
+        // Show save/update row
+        if (state.currentProfileId) {
+          document.getElementById('profileUpdateRow').classList.remove('hidden');
+        } else {
+          document.getElementById('profileNameRow').classList.remove('hidden');
+        }
+      } catch (e) {
+        showError('step1Error', e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Connect & Verify';
+      }
+    }
+
+    // ── Step 2: Account & campaign selection ──────────────────────────────────
+    async function onAccountSelect() {
+      const sel = document.getElementById('linkedinAccountSelect');
+      const uuid = sel.value;
+      const name = sel.options[sel.selectedIndex]?.dataset.name || '';
+
+      state.linkedinAccountUuid = uuid;
+      state.linkedinAccountName = name;
+
+      const connSel = document.getElementById('connectCampaignSelect');
+      const msgSel  = document.getElementById('messageCampaignSelect');
+      connSel.innerHTML = '<option value="">Loading…</option>';
+      msgSel.innerHTML  = '<option value="">Loading…</option>';
+
+      if (!uuid) return;
+
+      try {
+        const res = await fetch('/api/salesrobot/campaigns', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ srKey: state.srKey, linkedinAccountUuid: uuid }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        const campaigns = data.campaigns || [];
+        const opts = campaigns.map(c =>
+          `<option value="${escHtml(c.uuid)}" data-name="${escHtml(c.name)}">${escHtml(c.name)} (${c.status})</option>`
+        ).join('');
+        connSel.innerHTML = '<option value="">— select connect campaign —</option>' + opts;
+        msgSel.innerHTML  = '<option value="">— select message campaign —</option>' + opts;
+
+        connSel.onchange = () => {
+          state.connectCampaignUuid = connSel.value;
+          state.connectCampaignName = connSel.options[connSel.selectedIndex]?.dataset.name || '';
+          if (connSel.value && msgSel.value) {
+            enableStep('step3');
+            if (state.currentProfileId) document.getElementById('autoSyncRow').classList.remove('hidden');
+            checkAutoSyncStatus();
+          }
+        };
+        msgSel.onchange = () => {
+          state.messageCampaignUuid = msgSel.value;
+          state.messageCampaignName = msgSel.options[msgSel.selectedIndex]?.dataset.name || '';
+          if (connSel.value && msgSel.value) {
+            enableStep('step3');
+            if (state.currentProfileId) document.getElementById('autoSyncRow').classList.remove('hidden');
+            checkAutoSyncStatus();
+          }
+        };
+      } catch (e) {
+        showError('step2Error', e.message);
+      }
+    }
+
+    // ── Step 3: Fetch & sync tasks ────────────────────────────────────────────
+    async function fetchTasks() {
+      const errEl = document.getElementById('step3Error');
+      errEl.classList.add('hidden');
+
+      if (!state.outreachUserId) {
+        return showError('step3Error', 'Select your Outreach user (click Detect in Step 1) before fetching tasks.');
+      }
+
+      const btn = document.getElementById('fetchTasksBtn');
+      btn.disabled = true;
+      btn.textContent = 'Fetching…';
+
+      try {
+        const res = await fetch('/api/outreach/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: state.outreachAccessToken, outreachUserId: state.outreachUserId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        state.tasks = data.tasks || [];
+        renderTaskList();
+      } catch (e) {
+        showError('step3Error', e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Fetch my LinkedIn tasks from Outreach';
+      }
+    }
+
+    function renderTaskList() {
+      const tasks = state.tasks;
+      const listEl = document.getElementById('taskList');
+      const actionsEl = document.getElementById('syncActions');
+      const summaryEl = document.getElementById('taskSummary');
+
+      if (!tasks.length) {
+        listEl.innerHTML = '<p class="text-sm text-gray-400">No incomplete LinkedIn tasks found for your user.</p>';
+        listEl.classList.remove('hidden');
+        actionsEl.classList.add('hidden');
+        return;
+      }
+
+      const connect = tasks.filter(t => t.isConnect).length;
+      const message = tasks.length - connect;
+
+      listEl.innerHTML = tasks.slice(0, 20).map(t => {
+        const p = t.prospect;
+        const typeLabel = t.isConnect ? 'Connect' : 'Message';
+        const typeColor = t.isConnect ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700';
+        const noLi = !p.linkedInUrl ? ' <span class="text-xs text-red-400">(no LinkedIn URL)</span>' : '';
+        return `<div class="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0">
+          <span class="text-xs font-medium px-1.5 py-0.5 rounded ${typeColor} mt-0.5 whitespace-nowrap">${typeLabel}</span>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-gray-800 truncate">${escHtml(p.fullName || 'Unknown')}${noLi}</p>
+            <p class="text-xs text-gray-400 truncate">${escHtml([p.jobTitle, p.companyName].filter(Boolean).join(' @ '))}</p>
+          </div>
+        </div>`;
+      }).join('');
+      if (tasks.length > 20) {
+        listEl.innerHTML += `<p class="text-xs text-gray-400 py-2">… and ${tasks.length - 20} more</p>`;
+      }
+      listEl.classList.remove('hidden');
+
+      summaryEl.textContent = `${tasks.length} tasks: ${connect} connect, ${message} message`;
+      actionsEl.classList.remove('hidden');
+    }
+
+    async function syncTasks() {
+      if (!state.connectCampaignUuid || !state.messageCampaignUuid) {
+        return showError('step3Error', 'Select both campaigns in Step 2 first.');
+      }
+      if (!state.linkedinAccountUuid) {
+        return showError('step3Error', 'Select a LinkedIn account in Step 2 first.');
+      }
+
+      const markComplete = document.getElementById('markCompleteCheck').checked;
+      const btn = document.getElementById('syncBtn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+
+      document.getElementById('syncResults').classList.add('hidden');
+
+      const results = [];
+      let done = 0;
+
+      for (const task of state.tasks) {
+        const p = task.prospect;
+        if (!p.linkedInUrl) {
+          results.push({ taskId: task.id, name: p.fullName, success: false, error: 'No LinkedIn URL' });
+          done++;
+          btn.textContent = `Syncing… ${done}/${state.tasks.length}`;
+          continue;
+        }
+
+        const campaignUuid = task.isConnect ? state.connectCampaignUuid : state.messageCampaignUuid;
+
+        try {
+          const res = await fetch('/api/salesrobot/add-prospect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              srKey: state.srKey,
+              campaignUuid,
+              linkedinAccountUuid: state.linkedinAccountUuid,
+              prospect: p,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || data.message || 'Failed');
+
+          if (markComplete) {
+            try {
+              await fetch('/api/outreach/complete-task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessToken: state.outreachAccessToken, taskId: task.id }),
+              });
+            } catch { /* soft fail */ }
+          }
+
+          results.push({ taskId: task.id, name: p.fullName, success: true });
+        } catch (e) {
+          results.push({ taskId: task.id, name: p.fullName, success: false, error: e.message });
+        }
+
+        done++;
+        btn.textContent = `Syncing… ${done}/${state.tasks.length}`;
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Sync to SalesRobot';
+
+      // Save history
+      const profileName = document.getElementById('profileSelect').options[document.getElementById('profileSelect').selectedIndex]?.text || 'Unknown';
+      try {
+        await fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            profileName: state.currentProfileId ? profileName : 'Unknown',
+            linkedinAccountName: state.linkedinAccountName,
+            connectCampaign: state.connectCampaignName,
+            messageCampaign: state.messageCampaignName,
+            results,
+          }),
+        });
+      } catch { /* ignore */ }
+
+      // Show results
+      const succeeded = results.filter(r => r.success).length;
+      const failed    = results.length - succeeded;
+      const summaryEl = document.getElementById('syncSummary');
+      summaryEl.textContent = `${succeeded} synced successfully, ${failed} failed`;
+      summaryEl.className = failed === 0 ? 'text-sm font-medium text-green-600' : 'text-sm font-medium text-orange-500';
+
+      document.getElementById('syncResultList').innerHTML = results.map(r =>
+        `<div class="flex items-center gap-2 text-xs py-1">
+          <span class="${r.success ? 'text-green-500' : 'text-red-500'}">${r.success ? '✓' : '✗'}</span>
+          <span class="text-gray-700">${escHtml(r.name || r.taskId)}</span>
+          ${r.error ? `<span class="text-gray-400">— ${escHtml(r.error)}</span>` : ''}
+        </div>`
+      ).join('');
+
+      document.getElementById('syncResults').classList.remove('hidden');
+      loadHistory();
+    }
+
+    // ── Auto-sync ─────────────────────────────────────────────────────────────
+    let autoSyncEnabled = false;
+
+    async function checkAutoSyncStatus() {
+      if (!state.currentProfileId) return;
+      try {
+        const res = await fetch('/api/autosync/status');
+        const data = await res.json();
+        const entry = (data.status || []).find(s => s.id === state.currentProfileId);
+        autoSyncEnabled = !!entry;
+        updateAutoSyncUI(entry);
+      } catch { /* ignore */ }
+    }
+
+    function updateAutoSyncUI(entry) {
+      const btn = document.getElementById('autoSyncBtn');
+      const statusEl = document.getElementById('autoSyncStatus');
+      if (autoSyncEnabled && entry) {
+        btn.textContent = 'Disable';
+        btn.className = 'px-4 py-2 text-sm font-medium rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition-colors';
+        const lastRun = entry.lastRun ? new Date(entry.lastRun).toLocaleString() : 'never';
+        statusEl.textContent = `Last run: ${lastRun}${entry.lastCount ? ' · ' + entry.lastCount + ' synced' : ''}${entry.error ? ' · Error: ' + entry.error : ''}`;
+      } else {
+        btn.textContent = 'Enable';
+        btn.className = 'px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors';
+        statusEl.textContent = '';
+      }
+    }
+
+    async function toggleAutoSync() {
+      if (!state.currentProfileId) return showError('step2Error', 'Save a profile first to enable auto-sync.');
+      if (!state.outreachUserId) return showError('step2Error', 'Select your Outreach user before enabling auto-sync.');
+
+      const connectUuid = state.connectCampaignUuid || document.getElementById('connectCampaignSelect').value;
+      const messageUuid = state.messageCampaignUuid || document.getElementById('messageCampaignSelect').value;
+      if (!autoSyncEnabled && (!connectUuid || !messageUuid)) {
+        return showError('step2Error', 'Select both campaigns before enabling auto-sync.');
+      }
+
+      try {
+        const res = await fetch(`/api/profiles/${state.currentProfileId}/autosync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enable: !autoSyncEnabled,
+            connectCampaignUuid: connectUuid,
+            messageCampaignUuid: messageUuid,
+            linkedinAccountUuid: state.linkedinAccountUuid,
+            connectCampaignName: state.connectCampaignName,
+            messageCampaignName: state.messageCampaignName,
+            linkedinAccountName: state.linkedinAccountName,
+          }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        autoSyncEnabled = data.autoSync;
+        updateAutoSyncUI(autoSyncEnabled ? { lastRun: null, lastCount: 0 } : null);
+      } catch (e) {
+        showError('step2Error', e.message);
+      }
+    }
+
+    // ── History ───────────────────────────────────────────────────────────────
+    async function loadHistory() {
+      try {
+        const res = await fetch('/api/history');
+        const data = await res.json();
+        const runs = data.runs || [];
+        const el = document.getElementById('historyList');
+        if (!runs.length) {
+          el.innerHTML = '<p class="text-gray-400 text-sm">No sync runs yet.</p>';
+          return;
+        }
+        el.innerHTML = runs.slice(0, 10).map(r => {
+          const d = new Date(r.timestamp).toLocaleString();
+          return `<div class="flex items-start justify-between gap-4 py-2 border-b border-gray-100 last:border-0">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-gray-800">${escHtml(r.profileName)}${r.auto ? ' <span class="text-xs bg-indigo-100 text-indigo-600 px-1.5 rounded">auto</span>' : ''}</p>
+              <p class="text-xs text-gray-400 truncate">${escHtml(r.connectCampaign)} / ${escHtml(r.messageCampaign)}</p>
+              <p class="text-xs text-gray-400">${d}</p>
+            </div>
+            <div class="text-right shrink-0">
+              <p class="text-sm font-medium ${r.failed > 0 ? 'text-orange-500' : 'text-green-600'}">${r.succeeded}/${r.total}</p>
+              <p class="text-xs text-gray-400">${r.failed > 0 ? r.failed + ' failed' : 'all ok'}</p>
+            </div>
+          </div>`;
+        }).join('');
+      } catch {
+        document.getElementById('historyList').innerHTML = '<p class="text-gray-400 text-sm">Could not load history.</p>';
+      }
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    loadProfiles();
+    loadHistory();
+    handleOAuthCodeFromUrl();
+  </script>
+</body>
+</html>
