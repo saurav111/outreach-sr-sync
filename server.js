@@ -89,6 +89,15 @@ app.get('/api/config', (_req, res) => {
   res.json({ configured: !!(OUTREACH_CLIENT_ID && OUTREACH_CLIENT_SECRET && OUTREACH_REDIRECT_URI) });
 });
 
+// Debug: shows partial credentials so you can verify the right values are loaded (safe — secret is masked)
+app.get('/api/debug/config', (_req, res) => {
+  res.json({
+    clientId:     OUTREACH_CLIENT_ID    ? `${OUTREACH_CLIENT_ID.slice(0,6)}…(len ${OUTREACH_CLIENT_ID.length})`    : 'NOT SET',
+    clientSecret: OUTREACH_CLIENT_SECRET ? `${OUTREACH_CLIENT_SECRET.slice(0,4)}…(len ${OUTREACH_CLIENT_SECRET.length})` : 'NOT SET',
+    redirectUri:  OUTREACH_REDIRECT_URI  || 'NOT SET',
+  });
+});
+
 // Step 1 — frontend calls this to get the authorization URL
 app.post('/api/oauth/initiate', (_req, res) => {
   if (!OUTREACH_CLIENT_ID || !OUTREACH_REDIRECT_URI) {
@@ -137,7 +146,7 @@ app.get('/oauth/callback', async (req, res) => {
       }).toString(),
     });
     const data = await safeJson(r);
-    log('OAUTH_TOKEN_EXCHANGE', { status: r.status, hasAccessToken: !!data?.access_token, error: data?.error });
+    log('OAUTH_TOKEN_EXCHANGE', { status: r.status, hasAccessToken: !!data?.access_token, error: data?.error, errorDesc: data?.error_description, redirectUri: OUTREACH_REDIRECT_URI, clientIdPrefix: OUTREACH_CLIENT_ID?.slice(0,6) });
     if (!r.ok || !data?.access_token) {
       throw new Error(data?.error_description || data?.error || `HTTP ${r.status}`);
     }
