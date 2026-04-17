@@ -251,11 +251,9 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
   const PAGE_SIZE = 100;
   const MAX_PAGES = 20;
 
-  // No server-side user/state filters — Outreach filter syntax varies; filter client-side instead
+  // No server-side filters — Outreach filter syntax is strict; filter client-side
   let nextUrl = `${OUTREACH_BASE}/api/v2/tasks` +
-    `?include=prospect,assignee` +
-    `&fields[prospect]=firstName,lastName,title,company,linkedInUrl,emails,mobilePhones` +
-    `&fields[user]=id` +
+    `?include=prospect` +
     `&page[size]=${PAGE_SIZE}`;
 
   let page = 0;
@@ -265,7 +263,10 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
     page++;
     const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
     const data = await safeJson(r);
-    if (!r.ok || !data) throw new Error(`Outreach tasks error (HTTP ${r.status})`);
+    if (!r.ok || !data) {
+      log('OUTREACH_TASKS_RAW_ERROR', { status: r.status, body: data });
+      throw new Error(`Outreach tasks error (HTTP ${r.status})`);
+    }
 
     // Collect included prospects
     for (const inc of (data.included || [])) {
@@ -303,8 +304,8 @@ app.post('/api/debug/raw-tasks', async (req, res) => {
   if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
   try {
     // Two fetches: one unfiltered, one with user filter — to see if user filter is working
-    const urlNoFilter  = `${OUTREACH_BASE}/api/v2/tasks?page[size]=20&fields[task]=taskType,state,dueAt`;
-    const urlWithUser  = null; // not used — filters cause 400; filtering client-side
+    const urlNoFilter  = `${OUTREACH_BASE}/api/v2/tasks?page[size]=5`;
+    const urlWithUser  = null;
 
     const r1 = await fetch(urlNoFilter, { headers: outreachHeaders(accessToken) });
     const d1 = await safeJson(r1);
