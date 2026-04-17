@@ -251,11 +251,11 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
   const PAGE_SIZE = 100;
   const MAX_PAGES = 20;
 
+  // No server-side user/state filters — Outreach filter syntax varies; filter client-side instead
   let nextUrl = `${OUTREACH_BASE}/api/v2/tasks` +
-    `?filter[state]=incomplete` +
-    `&filter[assignee][id]=${outreachUserId}` +
-    `&include=prospect` +
+    `?include=prospect,assignee` +
     `&fields[prospect]=firstName,lastName,title,company,linkedInUrl,emails,mobilePhones` +
+    `&fields[user]=id` +
     `&page[size]=${PAGE_SIZE}`;
 
   let page = 0;
@@ -275,11 +275,17 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
     const pageTasks = data.data || [];
     log('OUTREACH_TASKS_PAGE', { page, count: pageTasks.length, userId: outreachUserId });
 
-    // Collect LinkedIn tasks (log all task types seen for debugging)
     for (const task of pageTasks) {
-      const tt = task.attributes?.taskType;
+      const tt    = task.attributes?.taskType;
+      const state = task.attributes?.state;
       if (tt) allTaskTypes.add(tt);
+
+      // Client-side filters: incomplete only, LinkedIn types only, current user only
+      if (state === 'complete' || state === 'completed') continue;
       if (!LINKEDIN_TASK_TYPES.has(tt)) continue;
+      const taskOwnerId = String(task.relationships?.assignee?.data?.id || '');
+      if (outreachUserId && taskOwnerId !== String(outreachUserId)) continue;
+
       const prospectId = task.relationships?.prospect?.data?.id;
       allTasks.push({ task, prospect: prospectMap[prospectId] || null, prospectId });
     }
@@ -297,10 +303,8 @@ app.post('/api/debug/raw-tasks', async (req, res) => {
   if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
   try {
     // Two fetches: one unfiltered, one with user filter — to see if user filter is working
-    const urlNoFilter  = `${OUTREACH_BASE}/api/v2/tasks?page[size]=20&filter[state]=incomplete&fields[task]=taskType,state,dueAt`;
-    const urlWithUser  = outreachUserId
-      ? `${OUTREACH_BASE}/api/v2/tasks?page[size]=20&filter[state]=incomplete&filter[assignee][id]=${outreachUserId}&fields[task]=taskType,state,dueAt`
-      : null;
+    const urlNoFilter  = `${OUTREACH_BASE}/api/v2/tasks?page[size]=20&fields[task]=taskType,state,dueAt`;
+    const urlWithUser  = null; // not used — filters cause 400; filtering client-side
 
     const r1 = await fetch(urlNoFilter, { headers: outreachHeaders(accessToken) });
     const d1 = await safeJson(r1);
