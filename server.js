@@ -120,9 +120,14 @@ app.get('/oauth/callback', async (req, res) => {
   }
 
   try {
+    // Send credentials both in Basic Auth header and body — Outreach accepts either
+    const basicAuth = Buffer.from(`${OUTREACH_CLIENT_ID}:${OUTREACH_CLIENT_SECRET}`).toString('base64');
     const r = await fetch(`${OUTREACH_BASE}/oauth/token`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${basicAuth}`,
+      },
       body: new URLSearchParams({
         client_id:     OUTREACH_CLIENT_ID,
         client_secret: OUTREACH_CLIENT_SECRET,
@@ -132,6 +137,7 @@ app.get('/oauth/callback', async (req, res) => {
       }).toString(),
     });
     const data = await safeJson(r);
+    log('OAUTH_TOKEN_EXCHANGE', { status: r.status, hasAccessToken: !!data?.access_token, error: data?.error });
     if (!r.ok || !data?.access_token) {
       throw new Error(data?.error_description || data?.error || `HTTP ${r.status}`);
     }
@@ -177,9 +183,13 @@ function oauthPopupHtml({ error, accessToken, refreshToken, expiresAt, state }) 
 // Refresh tokens using server-side credentials (no client secret stored in profiles)
 async function refreshOutreachToken(profile) {
   if (!profile.outreachRefreshToken) throw new Error('No refresh token stored — user must reconnect Outreach');
+  const basicAuth = Buffer.from(`${OUTREACH_CLIENT_ID}:${OUTREACH_CLIENT_SECRET}`).toString('base64');
   const r = await fetch(`${OUTREACH_BASE}/oauth/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type':  'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${basicAuth}`,
+    },
     body: new URLSearchParams({
       client_id:     OUTREACH_CLIENT_ID,
       client_secret: OUTREACH_CLIENT_SECRET,

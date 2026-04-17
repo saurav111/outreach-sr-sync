@@ -37,6 +37,9 @@
       <div class="space-y-3">
         <h3 class="text-sm font-medium text-gray-700">Outreach.io</h3>
 
+        <div id="serverConfigWarning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Server not configured — OUTREACH_CLIENT_ID, OUTREACH_CLIENT_SECRET, and OUTREACH_REDIRECT_URI must be set as environment variables in Render before OAuth will work.
+        </div>
         <div class="flex items-center gap-3">
           <button id="connectOutreachBtn" onclick="connectOutreach()"
             class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
@@ -931,6 +934,11 @@
     }
 
     // ── Init ──────────────────────────────────────────────────────────────────
+    // Check server config on load
+    fetch('/api/config').then(r => r.json()).then(d => {
+      if (!d.configured) document.getElementById('serverConfigWarning').classList.remove('hidden');
+    }).catch(() => {});
+
     loadProfiles();
     loadHistory();
     handleOAuthRedirectFallback();
