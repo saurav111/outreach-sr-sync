@@ -37,35 +37,10 @@
       <div class="space-y-3">
         <h3 class="text-sm font-medium text-gray-700">Outreach.io</h3>
 
-        <!-- OAuth credentials -->
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Client ID</label>
-            <input id="outreachClientId" type="text" placeholder="From Outreach app settings"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Client Secret</label>
-            <input id="outreachClientSecret" type="password" placeholder="••••••••"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          </div>
-        </div>
-        <div>
-          <label class="block text-xs text-gray-500 mb-1">Redirect URI</label>
-          <div class="flex gap-2">
-            <input id="outreachRedirectUri" type="text"
-              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="https://your-app.onrender.com/oauth/callback" />
-            <button onclick="useLocalRedirectUri()" class="text-xs text-indigo-600 hover:underline whitespace-nowrap px-1">Use localhost</button>
-          </div>
-          <p class="text-xs text-gray-400 mt-1">Must match exactly what's registered in your Outreach app. <a href="https://developers.outreach.io" target="_blank" class="text-indigo-500 hover:underline">Register app →</a></p>
-        </div>
-
-        <!-- Connect button + status -->
         <div class="flex items-center gap-3">
           <button id="connectOutreachBtn" onclick="connectOutreach()"
             class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
-            Connect Outreach
+            Connect with Outreach
           </button>
           <span id="outreachStatus" class="text-sm text-gray-400">Not connected</span>
         </div>
@@ -236,7 +211,6 @@
     // ── State ─────────────────────────────────────────────────────────────────
     let state = {
       srKey: '',
-      outreachClientId: '', outreachClientSecret: '', outreachRedirectUri: '',
       outreachAccessToken: null, outreachRefreshToken: null, outreachTokenExpiry: null,
       outreachUserId: null, outreachUserName: '',
       linkedinAccountUuid: '', linkedinAccountName: '',
@@ -280,9 +254,6 @@
       const sel = document.getElementById('profileSelect');
       const id = sel.value;
       // Clear keys
-      document.getElementById('outreachClientId').value = '';
-      document.getElementById('outreachClientSecret').value = '';
-      document.getElementById('outreachRedirectUri').value = '';
       document.getElementById('srKey').value = '';
       state.currentProfileId = null;
       state.outreachAccessToken = null;
@@ -342,9 +313,6 @@
       }
 
       // Populate fields
-      document.getElementById('outreachClientId').value = data.outreachClientId || '';
-      document.getElementById('outreachClientSecret').value = data.outreachClientSecret || '';
-      document.getElementById('outreachRedirectUri').value = data.outreachRedirectUri || '';
       document.getElementById('srKey').value = data.srKey || '';
       document.getElementById('profilePasswordInput').value = '';
       document.getElementById('profileUnlockRow').classList.add('hidden');
@@ -391,9 +359,6 @@
             name,
             password,
             srKey: state.srKey,
-            outreachClientId: state.outreachClientId,
-            outreachClientSecret: state.outreachClientSecret,
-            outreachRedirectUri: state.outreachRedirectUri,
             outreachAccessToken: state.outreachAccessToken,
             outreachRefreshToken: state.outreachRefreshToken,
             outreachTokenExpiry: state.outreachTokenExpiry,
@@ -472,8 +437,6 @@
       const data = await res.json();
       if (!res.ok) return alert(data.error || 'Could not delete profile');
       state.currentProfileId = null;
-      document.getElementById('outreachClientId').value = '';
-      document.getElementById('outreachClientSecret').value = '';
       document.getElementById('srKey').value = '';
       document.getElementById('profileSelect').value = '';
       document.getElementById('deleteProfileBtn').classList.add('hidden');
@@ -481,119 +444,78 @@
     }
 
     // ── Outreach OAuth ────────────────────────────────────────────────────────
-    function useLocalRedirectUri() {
-      document.getElementById('outreachRedirectUri').value = `${location.origin}/oauth/callback`;
-    }
+
+    // Listen for the postMessage from the OAuth popup
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'outreach_oauth_success') onOAuthSuccess(e.data);
+      if (e.data?.type === 'outreach_oauth_error')   onOAuthError(e.data.error);
+    });
 
     async function connectOutreach() {
-      const clientId     = document.getElementById('outreachClientId').value.trim();
-      const clientSecret = document.getElementById('outreachClientSecret').value.trim();
-      const redirectUri  = document.getElementById('outreachRedirectUri').value.trim();
-
       const errEl = document.getElementById('outreachError');
       errEl.classList.add('hidden');
-
-      if (!clientId || !clientSecret || !redirectUri) {
-        errEl.textContent = 'Client ID, Client Secret, and Redirect URI are all required.';
-        errEl.classList.remove('hidden');
-        return;
-      }
-
-      // Store in state for use after callback
-      state.outreachClientId     = clientId;
-      state.outreachClientSecret = clientSecret;
-      state.outreachRedirectUri  = redirectUri;
-
-      // Initiate OAuth
-      const res = await fetch('/api/oauth/initiate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, redirectUri }),
-      });
-      const { url, state: oauthState, error } = await res.json();
-      if (error) { errEl.textContent = error; errEl.classList.remove('hidden'); return; }
-
       document.getElementById('outreachStatus').textContent = 'Waiting for authorization…';
       document.getElementById('outreachStatus').className = 'text-sm text-yellow-600';
-
-      // Store state for later
-      window._outreachOauthState = oauthState;
-
-      // Open popup
-      const popup = window.open(url, 'outreach_oauth', 'width=600,height=700,left=200,top=100');
-
-      // Poll for callback redirect (popup returns to /?oauth_code=...&oauth_state=...)
-      const poll = setInterval(async () => {
-        if (popup?.closed) {
-          clearInterval(poll);
-          // Check if the main window has the code in the URL (popup redirected here)
-        }
-        try {
-          const popupUrl = popup?.location?.href || '';
-          if (popupUrl.includes('oauth_code=')) {
-            clearInterval(poll);
-            const params = new URL(popupUrl).searchParams;
-            const code = params.get('oauth_code');
-            const returnedState = params.get('oauth_state');
-            popup.close();
-            await handleOAuthCode(code, returnedState);
-          }
-        } catch { /* cross-origin, ignore until redirect */ }
-      }, 500);
-    }
-
-    // Handle code from URL (for same-window redirect flow)
-    async function handleOAuthCodeFromUrl() {
-      const params = new URLSearchParams(location.search);
-      const code  = params.get('oauth_code');
-      const oauthState = params.get('oauth_state');
-      if (!code) return;
-      // Clean URL
-      window.history.replaceState({}, '', '/');
-      await handleOAuthCode(code, oauthState);
-    }
-
-    async function handleOAuthCode(code, oauthState) {
-      const errEl = document.getElementById('outreachError');
-      errEl.classList.add('hidden');
-
-      if (!state.outreachClientId || !state.outreachClientSecret || !state.outreachRedirectUri) {
-        errEl.textContent = 'OAuth credentials lost — please re-enter Client ID, Secret, and Redirect URI then click Connect again.';
-        errEl.classList.remove('hidden');
-        document.getElementById('outreachStatus').textContent = 'Authorization failed';
-        document.getElementById('outreachStatus').className = 'text-sm text-red-500';
-        return;
-      }
+      document.getElementById('connectOutreachBtn').disabled = true;
 
       try {
-        document.getElementById('outreachStatus').textContent = 'Exchanging token…';
-        const res = await fetch('/api/oauth/exchange', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code,
-            state: oauthState,
-            clientId: state.outreachClientId,
-            clientSecret: state.outreachClientSecret,
-            redirectUri: state.outreachRedirectUri,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.accessToken) throw new Error(data.error || 'Token exchange failed');
+        const res = await fetch('/api/oauth/initiate', { method: 'POST' });
+        const { url, error } = await res.json();
+        if (error) throw new Error(error);
 
-        state.outreachAccessToken  = data.accessToken;
-        state.outreachRefreshToken = data.refreshToken;
-        state.outreachTokenExpiry  = data.expiresAt;
+        // Open the Outreach authorization page in a popup
+        const popup = window.open(url, 'outreach_oauth', 'width=600,height=700,left=200,top=100');
 
-        document.getElementById('outreachStatus').textContent = 'Connected';
-        document.getElementById('outreachStatus').className = 'text-sm text-green-600';
-        document.getElementById('outreachUserRow').classList.remove('hidden');
+        // Fallback: if popup was blocked, poll for redirect-flow result
+        const fallbackState = new URL(url).searchParams.get('state');
+        const pollTimer = setInterval(async () => {
+          if (!popup || popup.closed) {
+            clearInterval(pollTimer);
+            // Check if the main window has an oauth_state param (redirect fallback)
+            const params = new URLSearchParams(location.search);
+            const returnedState = params.get('oauth_state');
+            if (returnedState) {
+              window.history.replaceState({}, '', '/');
+              const r = await fetch(`/api/oauth/result/${returnedState}`);
+              if (r.ok) { const d = await r.json(); onOAuthSuccess(d); }
+              else onOAuthError('Authorization incomplete — please try again');
+            }
+          }
+        }, 1000);
       } catch (e) {
-        document.getElementById('outreachStatus').textContent = 'Authorization failed';
-        document.getElementById('outreachStatus').className = 'text-sm text-red-500';
-        errEl.textContent = e.message;
-        errEl.classList.remove('hidden');
+        onOAuthError(e.message);
       }
+    }
+
+    function onOAuthSuccess({ accessToken, refreshToken, expiresAt }) {
+      document.getElementById('connectOutreachBtn').disabled = false;
+      state.outreachAccessToken  = accessToken;
+      state.outreachRefreshToken = refreshToken;
+      state.outreachTokenExpiry  = expiresAt;
+      document.getElementById('outreachStatus').textContent = 'Connected';
+      document.getElementById('outreachStatus').className = 'text-sm text-green-600';
+      document.getElementById('outreachUserRow').classList.remove('hidden');
+    }
+
+    function onOAuthError(msg) {
+      document.getElementById('connectOutreachBtn').disabled = false;
+      document.getElementById('outreachStatus').textContent = 'Authorization failed';
+      document.getElementById('outreachStatus').className = 'text-sm text-red-500';
+      const errEl = document.getElementById('outreachError');
+      errEl.textContent = msg;
+      errEl.classList.remove('hidden');
+    }
+
+    // On load: handle redirect-flow fallback if oauth_state is in URL
+    async function handleOAuthRedirectFallback() {
+      const params = new URLSearchParams(location.search);
+      const oauthState = params.get('oauth_state');
+      if (!oauthState) return;
+      window.history.replaceState({}, '', '/');
+      try {
+        const r = await fetch(`/api/oauth/result/${oauthState}`);
+        if (r.ok) { const d = await r.json(); onOAuthSuccess(d); }
+      } catch { /* ignore */ }
     }
 
     async function detectOutreachUsers() {
@@ -1011,7 +933,7 @@
     // ── Init ──────────────────────────────────────────────────────────────────
     loadProfiles();
     loadHistory();
-    handleOAuthCodeFromUrl();
+    handleOAuthRedirectFallback();
   </script>
 </body>
 </html>

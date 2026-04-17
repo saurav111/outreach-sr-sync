@@ -10,6 +10,15 @@ const crypto   = require('crypto');
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
+// ── Outreach app credentials (set in Render dashboard, never in client) ──────
+const OUTREACH_CLIENT_ID     = process.env.OUTREACH_CLIENT_ID;
+const OUTREACH_CLIENT_SECRET = process.env.OUTREACH_CLIENT_SECRET;
+const OUTREACH_REDIRECT_URI  = process.env.OUTREACH_REDIRECT_URI;
+
+if (!OUTREACH_CLIENT_ID || !OUTREACH_CLIENT_SECRET || !OUTREACH_REDIRECT_URI) {
+  console.warn('[WARN] OUTREACH_CLIENT_ID / OUTREACH_CLIENT_SECRET / OUTREACH_REDIRECT_URI not set — OAuth will fail');
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 const OUTREACH_BASE   = 'https://api.outreach.io';
 const OUTREACH_ACCEPT = 'application/vnd.api+json';
@@ -75,19 +84,23 @@ app.use((req, _res, next) => {
 
 // ── Outreach OAuth ────────────────────────────────────────────────────────────
 
-// Step 1 — frontend calls this to get the OAuth URL
-app.post('/api/oauth/initiate', (req, res) => {
-  const { clientId, redirectUri } = req.body;
-  if (!clientId || !redirectUri) {
-    return res.status(400).json({ error: 'clientId and redirectUri are required' });
+// Let the frontend know whether env vars are configured
+app.get('/api/config', (_req, res) => {
+  res.json({ configured: !!(OUTREACH_CLIENT_ID && OUTREACH_CLIENT_SECRET && OUTREACH_REDIRECT_URI) });
+});
+
+// Step 1 — frontend calls this to get the authorization URL
+app.post('/api/oauth/initiate', (_req, res) => {
+  if (!OUTREACH_CLIENT_ID || !OUTREACH_REDIRECT_URI) {
+    return res.status(500).json({ error: 'Server not configured — set OUTREACH_CLIENT_ID and OUTREACH_REDIRECT_URI env vars in Render' });
   }
   const state = crypto.randomUUID();
-  pendingOAuth[state] = { done: false, clientId, redirectUri };
+  pendingOAuth[state] = { done: false };
 
   const scopes = 'tasks.all prospects.read users.read';
   const url = `${OUTREACH_BASE}/oauth/authorize` +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `?client_id=${encodeURIComponent(OUTREACH_CLIENT_ID)}` +
+    `&redirect_uri=${encodeURIComponent(OUTREACH_REDIRECT_URI)}` +
     `&response_type=code` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&state=${encodeURIComponent(state)}`;
@@ -95,34 +108,15 @@ app.post('/api/oauth/initiate', (req, res) => {
   res.json({ url, state });
 });
 
-// Step 2 — Outreach redirects here after user authorizes
+// Step 2 — Outreach redirects here; server completes the exchange with its secret
 app.get('/oauth/callback', async (req, res) => {
   const { code, state, error } = req.query;
 
-  if (error || !code || !state || !pendingOAuth[state]) {
-    return res.send(`<script>window.opener?.postMessage({type:'outreach_oauth_error',error:'${error || 'invalid_state'}'},'*');window.close();</script>`);
+  if (error) {
+    return res.send(oauthPopupHtml({ error }));
   }
-
-  const { clientId, redirectUri } = pendingOAuth[state];
-
-  try {
-    // Exchange code for tokens — need client_secret from body; client sends it along with clientId
-    // We don't have client_secret here yet. We stored only clientId in pendingOAuth.
-    // Solution: we'll do the exchange on the frontend side OR store client_secret in pendingOAuth too.
-    // Let's redirect the popup back to the main page with code+state so the main window finishes the exchange.
-    const params = new URLSearchParams({ code, state });
-    res.redirect(`/?oauth_code=${encodeURIComponent(code)}&oauth_state=${encodeURIComponent(state)}`);
-  } catch (e) {
-    pendingOAuth[state] = { done: true, error: e.message };
-    res.send(`<script>window.opener?.postMessage({type:'outreach_oauth_error',error:${JSON.stringify(e.message)}},'*');window.close();</script>`);
-  }
-});
-
-// Step 3 — frontend calls this to exchange code for tokens (has client_secret)
-app.post('/api/oauth/exchange', async (req, res) => {
-  const { code, state, clientId, clientSecret, redirectUri } = req.body;
-  if (!code || !clientId || !clientSecret || !redirectUri) {
-    return res.status(400).json({ error: 'code, clientId, clientSecret, and redirectUri are required' });
+  if (!code || !state) {
+    return res.send(oauthPopupHtml({ error: 'Missing code or state from Outreach' }));
   }
 
   try {
@@ -130,38 +124,67 @@ app.post('/api/oauth/exchange', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
+        client_id:     OUTREACH_CLIENT_ID,
+        client_secret: OUTREACH_CLIENT_SECRET,
+        redirect_uri:  OUTREACH_REDIRECT_URI,
+        grant_type:    'authorization_code',
         code,
       }).toString(),
     });
     const data = await safeJson(r);
     if (!r.ok || !data?.access_token) {
-      log('OAUTH_EXCHANGE_ERROR', { status: r.status, data });
-      return res.status(400).json({ error: data?.error_description || data?.error || 'Token exchange failed' });
+      throw new Error(data?.error_description || data?.error || `HTTP ${r.status}`);
     }
-
     const expiresAt = new Date(Date.now() + (data.expires_in - 120) * 1000).toISOString();
-    log('OAUTH_EXCHANGE_OK', { state });
-    res.json({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt });
+    const payload = { accessToken: data.access_token, refreshToken: data.refresh_token, expiresAt };
+
+    // Store for redirect-flow fallback (popup-blocked browsers)
+    pendingOAuth[state] = { done: true, ...payload };
+
+    log('OAUTH_CALLBACK_OK', { state });
+    res.send(oauthPopupHtml({ ...payload, state }));
   } catch (e) {
-    log('OAUTH_EXCHANGE_EXCEPTION', { error: e.message });
-    res.status(500).json({ error: e.message });
+    log('OAUTH_CALLBACK_ERROR', { error: e.message });
+    res.send(oauthPopupHtml({ error: e.message }));
   }
 });
 
-// Refresh tokens
+// Fallback: frontend polls this if popup was blocked and page redirected instead
+app.get('/api/oauth/result/:state', (req, res) => {
+  const p = pendingOAuth[req.params.state];
+  if (!p) return res.status(404).json({ error: 'Unknown or expired state' });
+  if (!p.done) return res.status(202).json({ pending: true });
+  const { accessToken, refreshToken, expiresAt } = p;
+  delete pendingOAuth[req.params.state];
+  res.json({ accessToken, refreshToken, expiresAt });
+});
+
+// Popup HTML — postMessages result to opener, falls back to redirect
+function oauthPopupHtml({ error, accessToken, refreshToken, expiresAt, state }) {
+  if (error) {
+    const msg = JSON.stringify({ type: 'outreach_oauth_error', error });
+    return `<!DOCTYPE html><html><body><p style="font-family:sans-serif;padding:2rem">Authorization failed: ${error}</p><script>
+      if(window.opener){window.opener.postMessage(${msg},'*');window.close();}
+    </script></body></html>`;
+  }
+  const msg = JSON.stringify({ type: 'outreach_oauth_success', accessToken, refreshToken, expiresAt });
+  return `<!DOCTYPE html><html><body><p style="font-family:sans-serif;padding:2rem">Connected! You can close this window.</p><script>
+    if(window.opener){window.opener.postMessage(${msg},'*');window.close();}
+    else{location.href='/?oauth_state='+encodeURIComponent(${JSON.stringify(state || '')});}
+  </script></body></html>`;
+}
+
+// Refresh tokens using server-side credentials (no client secret stored in profiles)
 async function refreshOutreachToken(profile) {
+  if (!profile.outreachRefreshToken) throw new Error('No refresh token stored — user must reconnect Outreach');
   const r = await fetch(`${OUTREACH_BASE}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: profile.outreachClientId,
-      client_secret: profile.outreachClientSecret,
-      redirect_uri: profile.outreachRedirectUri,
-      grant_type: 'refresh_token',
+      client_id:     OUTREACH_CLIENT_ID,
+      client_secret: OUTREACH_CLIENT_SECRET,
+      redirect_uri:  OUTREACH_REDIRECT_URI,
+      grant_type:    'refresh_token',
       refresh_token: profile.outreachRefreshToken,
     }).toString(),
   });
@@ -478,7 +501,6 @@ app.get('/api/profiles', (_req, res) => {
 app.post('/api/profiles', async (req, res) => {
   const {
     name, password, srKey,
-    outreachClientId, outreachClientSecret, outreachRedirectUri,
     outreachAccessToken, outreachRefreshToken, outreachTokenExpiry,
     outreachUserId, outreachUserName,
   } = req.body;
@@ -494,9 +516,6 @@ app.post('/api/profiles', async (req, res) => {
   profiles.push({
     id, name: name.trim(), passwordHash,
     srKey,
-    outreachClientId: outreachClientId || null,
-    outreachClientSecret: outreachClientSecret || null,
-    outreachRedirectUri: outreachRedirectUri || null,
     outreachAccessToken,
     outreachRefreshToken: outreachRefreshToken || null,
     outreachTokenExpiry: outreachTokenExpiry || null,
@@ -520,9 +539,6 @@ app.post('/api/profiles/:id/unlock', (req, res) => {
   log('PROFILE_UNLOCKED', { id: p.id, name: p.name });
   res.json({
     srKey: p.srKey,
-    outreachClientId: p.outreachClientId || null,
-    outreachClientSecret: p.outreachClientSecret || null,
-    outreachRedirectUri: p.outreachRedirectUri || null,
     outreachAccessToken: p.outreachAccessToken || null,
     outreachRefreshToken: p.outreachRefreshToken || null,
     outreachTokenExpiry: p.outreachTokenExpiry || null,

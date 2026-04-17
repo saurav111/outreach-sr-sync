@@ -8,3 +8,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: OUTREACH_CLIENT_ID
+        sync: false
+      - key: OUTREACH_CLIENT_SECRET
+        sync: false
+      - key: OUTREACH_REDIRECT_URI
+        sync: false
