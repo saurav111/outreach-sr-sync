@@ -26,16 +26,16 @@ const SR_API_BASE     = 'https://api.boomtechinc.com';
 const SR_APP_BASE     = 'https://app.boomtechinc.com';
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-// LinkedIn task types in Outreach (actual API values)
-const LINKEDIN_TASK_TYPES = new Set([
-  'linkedin',
-  'manual', // some orgs use manual tasks for LinkedIn steps
+// LinkedIn task actions in Outreach (the `action` attribute, not `taskType`)
+const LINKEDIN_ACTIONS = new Set([
+  'linkedin_send_connection_request',
+  'linkedin_send_message',
+  'linkedin_view_profile',
+  'linkedin_interact_with_post',
+  'linkedin_other',
 ]);
 
-// These task sub-types route to the connect campaign
-// Determined by task subject/note containing "connect" or "connection"
-// (Outreach doesn't have a separate taskType for connect vs message)
-const CONNECT_TASK_TYPES = new Set(['linkedin']); // overridden per-task by subject check
+const CONNECT_ACTION = 'linkedin_send_connection_request';
 
 // ── File paths ────────────────────────────────────────────────────────────────
 const PROFILES_FILE     = path.join(__dirname, 'profiles.json');
@@ -277,14 +277,14 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
     }
 
     for (const task of pageTasks) {
-      const tt    = task.attributes?.taskType;
-      const state = task.attributes?.state;
-      if (tt) allTaskTypes.add(tt);
+      const action = task.attributes?.action;
+      const state  = task.attributes?.state;
+      if (action) allTaskTypes.add(action);
 
-      // Client-side filters: incomplete only, LinkedIn types only, current user only
-      if (state === 'complete' || state === 'completed') continue;
-      if (!LINKEDIN_TASK_TYPES.has(tt)) continue;
-      const taskOwnerId = String(task.relationships?.assignee?.data?.id || '');
+      // Client-side filters: incomplete only, LinkedIn actions only, current user only
+      if (task.attributes?.completed || state === 'complete' || state === 'completed') continue;
+      if (!LINKEDIN_ACTIONS.has(action)) continue;
+      const taskOwnerId = String(task.relationships?.owner?.data?.id || '');
       if (outreachUserId && taskOwnerId !== String(outreachUserId)) continue;
 
       const prospectId = task.relationships?.prospect?.data?.id;
@@ -294,7 +294,7 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
     nextUrl = data.links?.next || null;
   }
 
-  log('OUTREACH_TASKS_TYPES_SEEN', { types: [...allTaskTypes], linkedInMatches: allTasks.length });
+  log('OUTREACH_TASKS_ACTIONS_SEEN', { actions: [...allTaskTypes], linkedInMatches: allTasks.length });
   return allTasks;
 }
 
@@ -387,7 +387,7 @@ app.post('/api/outreach/tasks', async (req, res) => {
       return {
         id: String(task.id),
         taskType: a.taskType,
-        isConnect: a.taskType === 'linkedin' || /connect/i.test(a.subject || a.note || ''),
+        isConnect: a.action === CONNECT_ACTION,
         dueAt: a.dueAt,
         note: a.note || '',
         prospect: {
