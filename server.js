@@ -26,19 +26,16 @@ const SR_API_BASE     = 'https://api.boomtechinc.com';
 const SR_APP_BASE     = 'https://app.boomtechinc.com';
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-// LinkedIn task types in Outreach
+// LinkedIn task types in Outreach (actual API values)
 const LINKEDIN_TASK_TYPES = new Set([
-  'sequence_step_linkedin_send_connection_request',
-  'sequence_step_linkedin_send_message',
-  'sequence_step_linkedin_view_profile',
-  'sequence_step_linkedin_interact_with_post',
-  'sequence_step_linkedin_other',
+  'linkedin',
+  'manual', // some orgs use manual tasks for LinkedIn steps
 ]);
 
-// Connect request types → connect campaign in SalesRobot
-const CONNECT_TASK_TYPES = new Set([
-  'sequence_step_linkedin_send_connection_request',
-]);
+// These task sub-types route to the connect campaign
+// Determined by task subject/note containing "connect" or "connection"
+// (Outreach doesn't have a separate taskType for connect vs message)
+const CONNECT_TASK_TYPES = new Set(['linkedin']); // overridden per-task by subject check
 
 // ── File paths ────────────────────────────────────────────────────────────────
 const PROFILES_FILE     = path.join(__dirname, 'profiles.json');
@@ -275,6 +272,9 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
 
     const pageTasks = data.data || [];
     log('OUTREACH_TASKS_PAGE', { page, count: pageTasks.length, userId: outreachUserId });
+    if (page === 1 && pageTasks.length > 0) {
+      log('OUTREACH_TASKS_SAMPLE', { firstTask: pageTasks[0] });
+    }
 
     for (const task of pageTasks) {
       const tt    = task.attributes?.taskType;
@@ -387,7 +387,7 @@ app.post('/api/outreach/tasks', async (req, res) => {
       return {
         id: String(task.id),
         taskType: a.taskType,
-        isConnect: CONNECT_TASK_TYPES.has(a.taskType),
+        isConnect: a.taskType === 'linkedin' || /connect/i.test(a.subject || a.note || ''),
         dueAt: a.dueAt,
         note: a.note || '',
         prospect: {
