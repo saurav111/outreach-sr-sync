@@ -253,12 +253,14 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
 
   let nextUrl = `${OUTREACH_BASE}/api/v2/tasks` +
     `?filter[state]=incomplete` +
-    `&filter[owner][id]=${outreachUserId}` +
+    `&filter[assignee][id]=${outreachUserId}` +
     `&include=prospect` +
     `&fields[prospect]=firstName,lastName,title,company,linkedInUrl,emails,mobilePhones` +
     `&page[size]=${PAGE_SIZE}`;
 
   let page = 0;
+  const allTaskTypes = new Set();
+
   while (nextUrl && page < MAX_PAGES) {
     page++;
     const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
@@ -270,9 +272,14 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
       if (inc.type === 'prospect') prospectMap[inc.id] = inc.attributes || {};
     }
 
-    // Collect LinkedIn tasks
-    for (const task of (data.data || [])) {
-      if (!LINKEDIN_TASK_TYPES.has(task.attributes?.taskType)) continue;
+    const pageTasks = data.data || [];
+    log('OUTREACH_TASKS_PAGE', { page, count: pageTasks.length, userId: outreachUserId });
+
+    // Collect LinkedIn tasks (log all task types seen for debugging)
+    for (const task of pageTasks) {
+      const tt = task.attributes?.taskType;
+      if (tt) allTaskTypes.add(tt);
+      if (!LINKEDIN_TASK_TYPES.has(tt)) continue;
       const prospectId = task.relationships?.prospect?.data?.id;
       allTasks.push({ task, prospect: prospectMap[prospectId] || null, prospectId });
     }
@@ -280,8 +287,39 @@ async function fetchOutreachLinkedInTasks(token, outreachUserId) {
     nextUrl = data.links?.next || null;
   }
 
+  log('OUTREACH_TASKS_TYPES_SEEN', { types: [...allTaskTypes], linkedInMatches: allTasks.length });
   return allTasks;
 }
+
+// Raw debug: fetch first page of tasks with no filters — shows real task types from Outreach
+app.post('/api/debug/raw-tasks', async (req, res) => {
+  const { accessToken, outreachUserId } = req.body;
+  if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
+  try {
+    // Two fetches: one unfiltered, one with user filter — to see if user filter is working
+    const urlNoFilter  = `${OUTREACH_BASE}/api/v2/tasks?page[size]=20&filter[state]=incomplete&fields[task]=taskType,state,dueAt`;
+    const urlWithUser  = outreachUserId
+      ? `${OUTREACH_BASE}/api/v2/tasks?page[size]=20&filter[state]=incomplete&filter[assignee][id]=${outreachUserId}&fields[task]=taskType,state,dueAt`
+      : null;
+
+    const r1 = await fetch(urlNoFilter, { headers: outreachHeaders(accessToken) });
+    const d1 = await safeJson(r1);
+
+    const r2 = urlWithUser ? await fetch(urlWithUser, { headers: outreachHeaders(accessToken) }) : null;
+    const d2 = r2 ? await safeJson(r2) : null;
+
+    const tasks1 = (d1?.data || []).map(t => ({ id: t.id, taskType: t.attributes?.taskType, state: t.attributes?.state }));
+    const tasks2 = (d2?.data || []).map(t => ({ id: t.id, taskType: t.attributes?.taskType, state: t.attributes?.state }));
+
+    res.json({
+      noFilter:   { status: r1.status, count: tasks1.length, taskTypes: [...new Set(tasks1.map(t => t.taskType))], sample: tasks1.slice(0,5) },
+      withUser:   r2 ? { status: r2.status, count: tasks2.length, taskTypes: [...new Set(tasks2.map(t => t.taskType))], sample: tasks2.slice(0,5) } : 'no userId provided',
+      ourLinkedInTypes: [...LINKEDIN_TASK_TYPES],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // Detect org users from tasks
 app.post('/api/outreach/detect-users', async (req, res) => {
