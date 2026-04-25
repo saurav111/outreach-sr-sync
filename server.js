@@ -384,12 +384,15 @@ app.post('/api/outreach/tasks', async (req, res) => {
       const email  = Array.isArray(p.emails) ? (p.emails[0]?.email || '') : '';
       const phone  = Array.isArray(p.mobilePhones) ? (p.mobilePhones[0] || '') :
                      Array.isArray(p.workPhones)   ? (p.workPhones[0]   || '') : '';
+      const note = a.note || '';
       return {
         id: String(task.id),
         taskType: a.taskType,
-        isConnect: a.action === CONNECT_ACTION,
+        action: a.action || '',
+        isVoiceNote: /voice\s*note/i.test(note),
+        isConnect: a.action === CONNECT_ACTION && !/voice\s*note/i.test(note),
         dueAt: a.dueAt,
-        note: a.note || '',
+        note,
         prospect: {
           linkedInUrl: li,
           firstName: p.firstName || '',
@@ -666,21 +669,24 @@ app.delete('/api/profiles/:id', (req, res) => {
 // ── Auto-sync toggle ──────────────────────────────────────────────────────────
 
 app.post('/api/profiles/:id/autosync', (req, res) => {
-  const { enable, connectCampaignUuid, messageCampaignUuid, linkedinAccountUuid,
-          connectCampaignName, messageCampaignName, linkedinAccountName } = req.body;
+  const { enable, connectCampaignUuid, messageCampaignUuid, voiceNoteCampaignUuid,
+          linkedinAccountUuid, connectCampaignName, messageCampaignName,
+          voiceNoteCampaignName, linkedinAccountName } = req.body;
   const profiles = readJson(PROFILES_FILE, []);
   const p = profiles.find(x => x.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'Profile not found' });
 
   p.autoSync = !!enable;
   if (enable) {
-    p.connectCampaignUuid  = connectCampaignUuid;
-    p.messageCampaignUuid  = messageCampaignUuid;
-    p.linkedinAccountUuid  = linkedinAccountUuid;
-    p.connectCampaignName  = connectCampaignName || '';
-    p.messageCampaignName  = messageCampaignName || '';
-    p.linkedinAccountName  = linkedinAccountName || '';
-    log('AUTOSYNC_ENABLED', { id: p.id, connectCampaignName, messageCampaignName });
+    p.connectCampaignUuid    = connectCampaignUuid;
+    p.messageCampaignUuid    = messageCampaignUuid;
+    p.voiceNoteCampaignUuid  = voiceNoteCampaignUuid || null;
+    p.linkedinAccountUuid    = linkedinAccountUuid;
+    p.connectCampaignName    = connectCampaignName    || '';
+    p.messageCampaignName    = messageCampaignName    || '';
+    p.voiceNoteCampaignName  = voiceNoteCampaignName  || '';
+    p.linkedinAccountName    = linkedinAccountName    || '';
+    log('AUTOSYNC_ENABLED', { id: p.id, connectCampaignName, messageCampaignName, voiceNoteCampaignName });
   } else {
     log('AUTOSYNC_DISABLED', { id: p.id });
   }
@@ -693,8 +699,9 @@ app.get('/api/autosync/status', (_req, res) => {
   const active = profiles.filter(p => p.autoSync).map(p => ({
     id: p.id,
     name: p.name,
-    connectCampaignName: p.connectCampaignName || '',
-    messageCampaignName: p.messageCampaignName || '',
+    connectCampaignName:   p.connectCampaignName   || '',
+    messageCampaignName:   p.messageCampaignName   || '',
+    voiceNoteCampaignName: p.voiceNoteCampaignName || '',
     ...autoSyncStatus[p.id],
   }));
   res.json({ status: active });
@@ -766,17 +773,24 @@ async function runAutoSyncForProfile(profile) {
 
     const results = [];
     for (const { task, prospect } of newItems) {
-      const taskId  = String(task.id);
-      const taskType = task.attributes?.taskType;
-      const isConnect = CONNECT_TASK_TYPES.has(taskType);
-      const campaignUuid = isConnect ? profile.connectCampaignUuid : profile.messageCampaignUuid;
+      const taskId   = String(task.id);
+      const action   = task.attributes?.action || '';
+      const note     = task.attributes?.note   || '';
+      const isVoiceNote = /voice\s*note/i.test(note);
+      const isConnect   = action === CONNECT_ACTION && !isVoiceNote;
+      const campaignUuid = isVoiceNote
+        ? profile.voiceNoteCampaignUuid
+        : isConnect
+          ? profile.connectCampaignUuid
+          : profile.messageCampaignUuid;
+      const campaignLabel = isVoiceNote ? 'voice note' : isConnect ? 'connect' : 'message';
 
       if (!prospect?.linkedInUrl) {
         results.push({ taskId, success: false, error: 'No LinkedIn URL on prospect' });
         continue;
       }
       if (!campaignUuid) {
-        results.push({ taskId, success: false, error: `No ${isConnect ? 'connect' : 'message'} campaign configured` });
+        results.push({ taskId, success: false, error: `No ${campaignLabel} campaign configured` });
         continue;
       }
 
