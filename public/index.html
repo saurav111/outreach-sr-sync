@@ -159,16 +159,16 @@
       <p id="step2Error" class="text-sm text-red-500 hidden"></p>
     </div>
 
-    <!-- Step 3: Fetch enrollments & sync -->
+    <!-- Step 3: Fetch tasks & sync -->
     <div id="step3" class="bg-white rounded-xl border border-gray-200 p-6 space-y-5 opacity-50 pointer-events-none">
       <h2 class="text-base font-semibold text-gray-900 flex items-center gap-2">
         <span class="w-6 h-6 bg-indigo-600 text-white text-xs font-bold rounded-full flex items-center justify-center">3</span>
-        Sync enrollments to SalesRobot
+        Sync tasks to SalesRobot
       </h2>
 
-      <button id="fetchTasksBtn" onclick="fetchEnrollments()"
+      <button id="fetchTasksBtn" onclick="fetchTasks()"
         class="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium py-2.5 rounded-lg text-sm transition-colors">
-        Fetch enrollments ready to sync
+        Fetch LinkedIn tasks from Outreach
       </button>
 
       <div id="taskList" class="hidden space-y-2"></div>
@@ -176,8 +176,13 @@
       <div id="syncActions" class="hidden space-y-3">
         <div class="flex items-center justify-between text-sm">
           <span id="taskSummary" class="text-gray-500"></span>
+          <label class="flex items-center gap-2 text-gray-600">
+            <input type="checkbox" id="markCompleteCheck" checked
+              class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+            Mark complete in Outreach after sync
+          </label>
         </div>
-        <button id="syncBtn" onclick="syncEnrollments()"
+        <button id="syncBtn" onclick="syncTasks()"
           class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
           Sync to SalesRobot
         </button>
@@ -210,7 +215,7 @@
       sequenceMappings: {},
       srCampaigns: [], // cached SR campaign list for the mapping UI
       currentProfileId: null,
-      enrollments: [], // current fetch result
+      tasks: [], // current fetch result
     };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -698,74 +703,76 @@
       }
     }
 
-    // ── Step 3: Fetch enrollments & sync ──────────────────────────────────────
-    async function fetchEnrollments() {
+    // ── Step 3: Fetch tasks & sync ────────────────────────────────────────────
+    async function fetchTasks() {
       document.getElementById('step3Error').classList.add('hidden');
-
-      if (!Object.keys(state.sequenceMappings).length) {
-        return showError('step3Error', 'Set up your sequence mapping in Step 2 first.');
-      }
 
       const btn = document.getElementById('fetchTasksBtn');
       btn.disabled = true;
       btn.textContent = 'Fetching…';
 
       try {
-        const res = await fetch('/api/outreach/enrollments', {
+        const res = await fetch('/api/outreach/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ accessToken: state.outreachAccessToken, sequenceMappings: state.sequenceMappings }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-
-        state.enrollments = data.enrollments || [];
-        renderEnrollmentList();
+        state.tasks = data.tasks || [];
+        renderTaskList();
       } catch (e) {
         showError('step3Error', e.message);
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Fetch enrollments ready to sync';
+        btn.textContent = 'Fetch LinkedIn tasks from Outreach';
       }
     }
 
-    function renderEnrollmentList() {
-      const enrollments = state.enrollments;
-      const listEl    = document.getElementById('taskList');
+    function renderTaskList() {
+      const tasks   = state.tasks;
+      const listEl  = document.getElementById('taskList');
       const actionsEl = document.getElementById('syncActions');
       const summaryEl = document.getElementById('taskSummary');
 
-      if (!enrollments.length) {
-        listEl.innerHTML = '<p class="text-sm text-gray-400">No enrollments with incomplete LinkedIn tasks found.</p>';
+      if (!tasks.length) {
+        listEl.innerHTML = '<p class="text-sm text-gray-400">No incomplete LinkedIn tasks found.</p>';
         listEl.classList.remove('hidden');
         actionsEl.classList.add('hidden');
         return;
       }
 
-      listEl.innerHTML = enrollments.slice(0, 20).map(e => {
-        const p = e.prospect;
-        const noLi = !p.linkedInUrl ? ' <span class="text-xs text-red-400">(no LinkedIn URL)</span>' : '';
+      const mapped   = tasks.filter(t => t.srCampaignUuid).length;
+      const unmapped = tasks.length - mapped;
+
+      listEl.innerHTML = tasks.slice(0, 20).map(t => {
+        const p = t.prospect;
+        const noLi  = !p.linkedInUrl    ? ' <span class="text-xs text-red-400">(no LinkedIn URL)</span>' : '';
+        const noMap = !t.srCampaignUuid ? ' <span class="text-xs text-amber-500">(no campaign mapped)</span>' : '';
+        const seqLabel = t.sequenceName || 'No sequence';
+        const seqColor = t.srCampaignUuid ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500';
         return `<div class="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0">
-          <span class="text-xs font-medium px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 mt-0.5 whitespace-nowrap">${escHtml(e.sequenceName)}</span>
+          <span class="text-xs font-medium px-1.5 py-0.5 rounded ${seqColor} mt-0.5 whitespace-nowrap max-w-[140px] truncate" title="${escHtml(seqLabel)}">${escHtml(seqLabel)}</span>
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium text-gray-800 truncate">${escHtml(p.fullName || 'Unknown')}${noLi}</p>
-            <p class="text-xs text-gray-400 truncate">${escHtml([p.jobTitle, p.companyName].filter(Boolean).join(' @ '))} → ${escHtml(e.srCampaignName)}</p>
+            <p class="text-sm font-medium text-gray-800 truncate">${escHtml(p.fullName || 'Unknown')}${noLi}${noMap}</p>
+            <p class="text-xs text-gray-400 truncate">${escHtml([p.jobTitle, p.companyName].filter(Boolean).join(' @ '))}${t.srCampaignName ? ' → ' + escHtml(t.srCampaignName) : ''}</p>
           </div>
         </div>`;
       }).join('');
-      if (enrollments.length > 20) {
-        listEl.innerHTML += `<p class="text-xs text-gray-400 py-2">… and ${enrollments.length - 20} more</p>`;
+      if (tasks.length > 20) {
+        listEl.innerHTML += `<p class="text-xs text-gray-400 py-2">… and ${tasks.length - 20} more</p>`;
       }
       listEl.classList.remove('hidden');
-      summaryEl.textContent = `${enrollments.length} enrollment${enrollments.length !== 1 ? 's' : ''} ready to sync`;
+      summaryEl.textContent = `${tasks.length} task${tasks.length !== 1 ? 's' : ''}: ${mapped} mapped, ${unmapped} without campaign`;
       actionsEl.classList.remove('hidden');
     }
 
-    async function syncEnrollments() {
+    async function syncTasks() {
       if (!state.linkedinAccountUuid) {
         return showError('step3Error', 'Select a LinkedIn account in Step 2 first.');
       }
 
+      const markComplete = document.getElementById('markCompleteCheck').checked;
       const btn = document.getElementById('syncBtn');
       btn.disabled = true;
       btn.textContent = 'Syncing…';
@@ -774,12 +781,17 @@
       const results = [];
       let done = 0;
 
-      for (const e of state.enrollments) {
-        const p = e.prospect;
+      for (const task of state.tasks) {
+        const p = task.prospect;
+
         if (!p.linkedInUrl) {
-          results.push({ id: e.enrollmentId, name: p.fullName, success: false, error: 'No LinkedIn URL' });
-          done++;
-          btn.textContent = `Syncing… ${done}/${state.enrollments.length}`;
+          results.push({ id: task.id, name: p.fullName, success: false, error: 'No LinkedIn URL' });
+          done++; btn.textContent = `Syncing… ${done}/${state.tasks.length}`;
+          continue;
+        }
+        if (!task.srCampaignUuid) {
+          results.push({ id: task.id, name: p.fullName, success: false, error: task.sequenceName ? `Sequence "${task.sequenceName}" not mapped` : 'Task has no sequence' });
+          done++; btn.textContent = `Syncing… ${done}/${state.tasks.length}`;
           continue;
         }
 
@@ -789,20 +801,30 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               srKey: state.srKey,
-              campaignUuid: e.srCampaignUuid,
+              campaignUuid: task.srCampaignUuid,
               linkedinAccountUuid: state.linkedinAccountUuid,
               prospect: p,
             }),
           });
           const data = await res.json();
           if (!res.ok || !data.success) throw new Error(data.error || data.message || 'Failed');
-          results.push({ id: e.enrollmentId, name: p.fullName, success: true });
+
+          if (markComplete) {
+            try {
+              await fetch('/api/outreach/complete-task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessToken: state.outreachAccessToken, taskId: task.id }),
+              });
+            } catch { /* soft fail */ }
+          }
+
+          results.push({ id: task.id, name: p.fullName, success: true });
         } catch (err) {
-          results.push({ id: e.enrollmentId, name: p.fullName, success: false, error: err.message });
+          results.push({ id: task.id, name: p.fullName, success: false, error: err.message });
         }
 
-        done++;
-        btn.textContent = `Syncing… ${done}/${state.enrollments.length}`;
+        done++; btn.textContent = `Syncing… ${done}/${state.tasks.length}`;
       }
 
       btn.disabled = false;
@@ -836,6 +858,15 @@
 
       document.getElementById('syncResults').classList.remove('hidden');
       loadHistory();
+    }
+
+    // Mark a single task complete (server-side)
+    async function completeTask(taskId) {
+      return fetch('/api/outreach/complete-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken: state.outreachAccessToken, taskId }),
+      });
     }
 
     // ── Auto-sync ─────────────────────────────────────────────────────────────
