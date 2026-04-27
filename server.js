@@ -103,7 +103,7 @@ app.post('/api/oauth/initiate', (_req, res) => {
   const state = crypto.randomUUID();
   pendingOAuth[state] = { done: false };
 
-  const scopes = 'tasks.all prospects.read users.read sequences.read sequenceStates.read';
+  const scopes = 'tasks.all prospects.read users.read sequences.read sequenceStates.read sequenceStates.write';
   const url = `${OUTREACH_BASE}/oauth/authorize` +
     `?client_id=${encodeURIComponent(OUTREACH_CLIENT_ID)}` +
     `&redirect_uri=${encodeURIComponent(OUTREACH_REDIRECT_URI)}` +
@@ -452,6 +452,146 @@ app.post('/api/outreach/enrollments', async (req, res) => {
   } catch (e) {
     log('ENROLLMENTS_ERROR', { error: e.message });
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Reply webhook helpers ─────────────────────────────────────────────────────
+
+// Normalize LinkedIn URL for comparison (remove trailing slash, lowercase)
+function normalizeLinkedInUrl(url) {
+  return (url || '').toLowerCase().replace(/\/$/, '').trim();
+}
+
+// Find Outreach prospect ID by LinkedIn URL — tries filter first, falls back to pagination
+async function findProspectByLinkedInUrl(token, linkedInUrl) {
+  const target = normalizeLinkedInUrl(linkedInUrl);
+  if (!target) return null;
+
+  // Try server-side filter first (may or may not work depending on Outreach plan)
+  try {
+    const r = await fetch(
+      `${OUTREACH_BASE}/api/v2/prospects?page[size]=1&filter[linkedInUrl]=${encodeURIComponent(target)}`,
+      { headers: outreachHeaders(token) }
+    );
+    const data = await safeJson(r);
+    if (r.ok && data?.data?.length) return String(data.data[0].id);
+  } catch { /* fall through to pagination */ }
+
+  // Fallback: paginate all prospects and match client-side
+  let nextUrl = `${OUTREACH_BASE}/api/v2/prospects?page[size]=100`;
+  let page = 0;
+  while (nextUrl && page < 20) {
+    page++;
+    const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
+    const data = await safeJson(r);
+    if (!r.ok || !data) break;
+    for (const p of (data.data || [])) {
+      if (normalizeLinkedInUrl(p.attributes?.linkedInUrl) === target) return String(p.id);
+    }
+    nextUrl = data.links?.next || null;
+  }
+
+  return null;
+}
+
+// Find active sequenceState IDs for a prospect, restricted to our mapped sequences
+async function findActiveSequenceStatesForProspect(token, prospectId, sequenceMappings) {
+  const mappedSeqIds = new Set(Object.keys(sequenceMappings));
+  const found = [];
+
+  let nextUrl = `${OUTREACH_BASE}/api/v2/sequenceStates?page[size]=100`;
+  let page = 0;
+  while (nextUrl && page < 10) {
+    page++;
+    const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
+    const data = await safeJson(r);
+    if (!r.ok || !data) break;
+
+    for (const ss of (data.data || [])) {
+      if (ss.attributes?.state !== 'active') continue;
+      if (String(ss.relationships?.prospect?.data?.id) !== prospectId) continue;
+      const seqId = String(ss.relationships?.sequence?.data?.id || '');
+      // Only stop sequences we manage; skip unrelated ones
+      if (!mappedSeqIds.has(seqId)) continue;
+      found.push(String(ss.id));
+    }
+
+    nextUrl = data.links?.next || null;
+  }
+
+  return found;
+}
+
+// PATCH a sequenceState to finished
+async function finishSequenceState(token, stateId) {
+  const r = await fetch(`${OUTREACH_BASE}/api/v2/sequenceStates/${stateId}`, {
+    method: 'PATCH',
+    headers: outreachHeaders(token),
+    body: JSON.stringify({
+      data: { type: 'sequenceState', id: stateId, attributes: { state: 'finished' } },
+    }),
+  });
+  const data = await safeJson(r);
+  if (!r.ok) throw new Error(`PATCH sequenceState ${stateId} failed: HTTP ${r.status}`);
+  return data;
+}
+
+// ── SalesRobot reply webhook ──────────────────────────────────────────────────
+
+// SalesRobot POSTs here when a LinkedIn reply is received on a campaign.
+// We look up the prospect in Outreach and finish their active sequence(s).
+app.post('/webhooks/salesrobot/reply', async (req, res) => {
+  const payload = req.body;
+
+  // Only act on received messages (replies), not sent ones
+  if (payload.messageType !== 'received') {
+    log('REPLY_WEBHOOK_SKIP', { reason: 'not a received message', messageType: payload.messageType });
+    return res.json({ success: true, skipped: true });
+  }
+
+  const linkedInUrl = payload.profileUrl || payload.linkedinProfile;
+  if (!linkedInUrl) {
+    log('REPLY_WEBHOOK_SKIP', { reason: 'no LinkedIn URL in payload' });
+    return res.json({ success: true, skipped: true });
+  }
+
+  // Acknowledge immediately so SalesRobot doesn't time out — process async
+  res.json({ success: true });
+
+  log('REPLY_WEBHOOK_RECEIVED', { linkedInUrl, campaignName: payload.campaignName, senderAccount: payload.linkedInAccountName });
+
+  // Match profile by linkedInAccountName — fall back to all auto-sync profiles
+  const profiles = readJson(PROFILES_FILE, []);
+  let candidates = profiles.filter(p => p.autoSync && p.outreachAccessToken);
+  if (payload.linkedInAccountName) {
+    const byName = candidates.filter(p => p.linkedinAccountName === payload.linkedInAccountName);
+    if (byName.length) candidates = byName;
+  }
+
+  for (const profile of candidates) {
+    try {
+      const token = await getValidToken(profile);
+      const mappings = profile.sequenceMappings || {};
+
+      const prospectId = await findProspectByLinkedInUrl(token, linkedInUrl);
+      if (!prospectId) {
+        log('REPLY_PROSPECT_NOT_FOUND', { profileId: profile.id, linkedInUrl });
+        continue;
+      }
+
+      const stateIds = await findActiveSequenceStatesForProspect(token, prospectId, mappings);
+      if (!stateIds.length) {
+        log('REPLY_NO_ACTIVE_SEQUENCES', { profileId: profile.id, prospectId, linkedInUrl });
+        continue;
+      }
+
+      for (const stateId of stateIds) {
+        await finishSequenceState(token, stateId);
+        log('REPLY_SEQUENCE_FINISHED', { profileId: profile.id, prospectId, stateId, linkedInUrl });
+      }
+    } catch (e) {
+      log('REPLY_WEBHOOK_ERROR', { profileId: profile.id, error: e.message });
+    }
   }
 });
 
