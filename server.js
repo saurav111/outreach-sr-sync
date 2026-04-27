@@ -241,61 +241,72 @@ function outreachHeaders(token) {
   };
 }
 
-// Fetch all incomplete LinkedIn tasks for a user (cursor-paginated)
-async function fetchOutreachLinkedInTasks(token, outreachUserId) {
-  const allTasks = [];
-  const prospectMap = {}; // id → attributes
-  const PAGE_SIZE = 100;
-  const MAX_PAGES = 20;
-
-  // No server-side filters — Outreach filter syntax is strict; filter client-side
-  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks` +
-    `?include=prospect` +
-    `&page[size]=${PAGE_SIZE}`;
-
+// Returns a Set of prospect IDs that have at least one incomplete LinkedIn task
+async function fetchIncompleteLinkedInProspectIds(token) {
+  const prospectIds = new Set();
+  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?page[size]=100`;
   let page = 0;
-  const allTaskTypes = new Set();
 
-  while (nextUrl && page < MAX_PAGES) {
+  while (nextUrl && page < 20) {
     page++;
     const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
     const data = await safeJson(r);
-    if (!r.ok || !data) {
-      log('OUTREACH_TASKS_RAW_ERROR', { status: r.status, body: data });
-      throw new Error(`Outreach tasks error (HTTP ${r.status})`);
-    }
+    if (!r.ok || !data) throw new Error(`Outreach tasks error (HTTP ${r.status})`);
 
-    // Collect included prospects
+    for (const task of (data.data || [])) {
+      if (task.attributes?.completed) continue;
+      if (!LINKEDIN_ACTIONS.has(task.attributes?.action)) continue;
+      const pid = task.relationships?.prospect?.data?.id;
+      if (pid) prospectIds.add(String(pid));
+    }
+    nextUrl = data.links?.next || null;
+  }
+
+  log('INCOMPLETE_LI_PROSPECT_IDS', { count: prospectIds.size });
+  return prospectIds;
+}
+
+// Returns active sequenceState enrollments for sequences in the mapping, with prospect data
+async function fetchActiveEnrollments(token, sequenceMappings) {
+  const mappedSeqIds = new Set(Object.keys(sequenceMappings));
+  if (!mappedSeqIds.size) return [];
+
+  const enrollments = [];
+  const prospectMap  = {};
+  const sequenceMap  = {};
+  let nextUrl = `${OUTREACH_BASE}/api/v2/sequenceStates?page[size]=100&include=prospect,sequence`;
+  let page = 0;
+
+  while (nextUrl && page < 20) {
+    page++;
+    const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
+    const data = await safeJson(r);
+    if (!r.ok || !data) throw new Error(`Outreach sequenceStates error (HTTP ${r.status})`);
+
     for (const inc of (data.included || [])) {
       if (inc.type === 'prospect') prospectMap[inc.id] = inc.attributes || {};
+      if (inc.type === 'sequence') sequenceMap[inc.id] = inc.attributes || {};
     }
 
-    const pageTasks = data.data || [];
-    log('OUTREACH_TASKS_PAGE', { page, count: pageTasks.length, userId: outreachUserId });
-    if (page === 1 && pageTasks.length > 0) {
-      log('OUTREACH_TASKS_SAMPLE', { firstTask: pageTasks[0] });
-    }
-
-    for (const task of pageTasks) {
-      const action = task.attributes?.action;
-      const state  = task.attributes?.state;
-      if (action) allTaskTypes.add(action);
-
-      // Client-side filters: incomplete only, LinkedIn actions only, current user only
-      if (task.attributes?.completed || state === 'complete' || state === 'completed') continue;
-      if (!LINKEDIN_ACTIONS.has(action)) continue;
-      const taskOwnerId = String(task.relationships?.owner?.data?.id || '');
-      if (outreachUserId && taskOwnerId !== String(outreachUserId)) continue;
-
-      const prospectId = task.relationships?.prospect?.data?.id;
-      allTasks.push({ task, prospect: prospectMap[prospectId] || null, prospectId });
+    for (const ss of (data.data || [])) {
+      if (ss.attributes?.state !== 'active') continue;
+      const seqId  = String(ss.relationships?.sequence?.data?.id || '');
+      if (!mappedSeqIds.has(seqId)) continue;
+      const prospectId = String(ss.relationships?.prospect?.data?.id || '');
+      enrollments.push({
+        enrollmentId: String(ss.id),
+        sequenceId:   seqId,
+        prospectId,
+        prospect:     prospectMap[ss.relationships?.prospect?.data?.id] || null,
+        sequenceName: sequenceMap[ss.relationships?.sequence?.data?.id]?.name || seqId,
+      });
     }
 
     nextUrl = data.links?.next || null;
   }
 
-  log('OUTREACH_TASKS_ACTIONS_SEEN', { actions: [...allTaskTypes], linkedInMatches: allTasks.length });
-  return allTasks;
+  log('ACTIVE_ENROLLMENTS', { count: enrollments.length, sequences: [...mappedSeqIds] });
+  return enrollments;
 }
 
 // Raw debug: fetch first page of tasks with no filters — shows real task types from Outreach
@@ -361,70 +372,85 @@ app.post('/api/outreach/detect-users', async (req, res) => {
   }
 });
 
-// Fetch incomplete LinkedIn tasks for the current user
-app.post('/api/outreach/tasks', async (req, res) => {
-  const { accessToken, outreachUserId } = req.body;
+// List all Outreach sequences (paginated)
+app.post('/api/outreach/sequences', async (req, res) => {
+  const { accessToken } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
-  if (!outreachUserId) return res.status(400).json({ error: 'outreachUserId required — select your user first' });
 
   try {
-    const items = await fetchOutreachLinkedInTasks(accessToken, outreachUserId);
+    const allSequences = [];
+    let nextUrl = `${OUTREACH_BASE}/api/v2/sequences?page[size]=100`;
+    let page = 0;
 
-    // Build clean task list for the frontend
-    const tasks = items.map(({ task, prospect }) => {
-      const a  = task.attributes || {};
-      const p  = prospect || {};
-      const li = p.linkedInUrl || '';
-      const email  = Array.isArray(p.emails) ? (p.emails[0]?.email || '') : '';
-      const phone  = Array.isArray(p.mobilePhones) ? (p.mobilePhones[0] || '') :
-                     Array.isArray(p.workPhones)   ? (p.workPhones[0]   || '') : '';
-      const note = a.note || '';
-      return {
-        id: String(task.id),
-        taskType: a.taskType,
-        action: a.action || '',
-        isVoiceNote: /voice\s*note/i.test(note),
-        isConnect: a.action === CONNECT_ACTION && !/voice\s*note/i.test(note),
-        dueAt: a.dueAt,
-        note,
-        prospect: {
-          linkedInUrl: li,
-          firstName: p.firstName || '',
-          lastName: p.lastName || '',
-          fullName: [p.firstName, p.lastName].filter(Boolean).join(' '),
-          jobTitle: p.title || p.occupation || '',
-          companyName: p.company || '',
-          emailId: email,
-          phoneNo: phone,
-        },
-      };
-    });
+    while (nextUrl && page < 10) {
+      page++;
+      const r = await fetch(nextUrl, { headers: outreachHeaders(accessToken) });
+      const data = await safeJson(r);
+      if (!r.ok || !data) return res.status(400).json({ error: `Outreach error (HTTP ${r.status})` });
 
-    log('OUTREACH_TASKS', { total: tasks.length, outreachUserId });
-    res.json({ tasks });
+      for (const seq of (data.data || [])) {
+        const a = seq.attributes || {};
+        allSequences.push({
+          id:      String(seq.id),
+          name:    a.name || String(seq.id),
+          enabled: a.enabled ?? true,
+        });
+      }
+      nextUrl = data.links?.next || null;
+    }
+
+    log('SEQUENCES_FETCHED', { count: allSequences.length });
+    res.json({ sequences: allSequences });
   } catch (e) {
-    log('OUTREACH_TASKS_ERROR', { error: e.message });
     res.status(500).json({ error: e.message });
   }
 });
 
-// Mark a task complete in Outreach
-app.post('/api/outreach/complete-task', async (req, res) => {
-  const { accessToken, taskId } = req.body;
-  if (!accessToken || !taskId) return res.status(400).json({ error: 'accessToken and taskId required' });
+// Fetch enrollments ready to sync: active in mapped sequences AND has incomplete LinkedIn tasks
+app.post('/api/outreach/enrollments', async (req, res) => {
+  const { accessToken, sequenceMappings } = req.body;
+  if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
+  if (!sequenceMappings || !Object.keys(sequenceMappings).length) {
+    return res.status(400).json({ error: 'sequenceMappings required — map at least one sequence' });
+  }
 
   try {
-    const r = await fetch(`${OUTREACH_BASE}/api/v2/tasks/${taskId}/actions/markComplete`, {
-      method: 'POST',
-      headers: outreachHeaders(accessToken),
+    // Run both fetches in parallel
+    const [enrollments, incompleteProspectIds] = await Promise.all([
+      fetchActiveEnrollments(accessToken, sequenceMappings),
+      fetchIncompleteLinkedInProspectIds(accessToken),
+    ]);
+
+    // Filter: only prospects with incomplete LinkedIn tasks
+    const ready = enrollments.filter(e => incompleteProspectIds.has(e.prospectId));
+
+    const out = ready.map(e => {
+      const p = e.prospect || {};
+      const email = Array.isArray(p.emails) ? (p.emails[0]?.email || '') : '';
+      const phone = Array.isArray(p.mobilePhones) ? (p.mobilePhones[0] || '') : '';
+      return {
+        enrollmentId: e.enrollmentId,
+        sequenceId:   e.sequenceId,
+        sequenceName: e.sequenceName,
+        srCampaignUuid: sequenceMappings[e.sequenceId]?.srCampaignUuid || '',
+        srCampaignName: sequenceMappings[e.sequenceId]?.srCampaignName || '',
+        prospect: {
+          linkedInUrl:  p.linkedInUrl  || '',
+          firstName:    p.firstName    || '',
+          lastName:     p.lastName     || '',
+          fullName:     [p.firstName, p.lastName].filter(Boolean).join(' '),
+          jobTitle:     p.title        || p.occupation || '',
+          companyName:  p.company      || '',
+          emailId:      email,
+          phoneNo:      phone,
+        },
+      };
     });
-    const data = await safeJson(r);
-    if (!r.ok) {
-      log('MARK_COMPLETE_ERROR', { taskId, status: r.status, data });
-      return res.status(r.status).json({ error: data?.errors?.[0]?.detail || `HTTP ${r.status}` });
-    }
-    res.json({ success: true });
+
+    log('ENROLLMENTS_READY', { total: enrollments.length, ready: out.length });
+    res.json({ enrollments: out });
   } catch (e) {
+    log('ENROLLMENTS_ERROR', { error: e.message });
     res.status(500).json({ error: e.message });
   }
 });
@@ -663,24 +689,17 @@ app.delete('/api/profiles/:id', (req, res) => {
 // ── Auto-sync toggle ──────────────────────────────────────────────────────────
 
 app.post('/api/profiles/:id/autosync', (req, res) => {
-  const { enable, connectCampaignUuid, messageCampaignUuid, voiceNoteCampaignUuid,
-          linkedinAccountUuid, connectCampaignName, messageCampaignName,
-          voiceNoteCampaignName, linkedinAccountName } = req.body;
+  const { enable, sequenceMappings, linkedinAccountUuid, linkedinAccountName } = req.body;
   const profiles = readJson(PROFILES_FILE, []);
   const p = profiles.find(x => x.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'Profile not found' });
 
   p.autoSync = !!enable;
   if (enable) {
-    p.connectCampaignUuid    = connectCampaignUuid;
-    p.messageCampaignUuid    = messageCampaignUuid;
-    p.voiceNoteCampaignUuid  = voiceNoteCampaignUuid || null;
-    p.linkedinAccountUuid    = linkedinAccountUuid;
-    p.connectCampaignName    = connectCampaignName    || '';
-    p.messageCampaignName    = messageCampaignName    || '';
-    p.voiceNoteCampaignName  = voiceNoteCampaignName  || '';
-    p.linkedinAccountName    = linkedinAccountName    || '';
-    log('AUTOSYNC_ENABLED', { id: p.id, connectCampaignName, messageCampaignName, voiceNoteCampaignName });
+    p.sequenceMappings   = sequenceMappings   || {};
+    p.linkedinAccountUuid = linkedinAccountUuid || p.linkedinAccountUuid || '';
+    p.linkedinAccountName = linkedinAccountName || p.linkedinAccountName || '';
+    log('AUTOSYNC_ENABLED', { id: p.id, mappedSequences: Object.keys(sequenceMappings || {}).length });
   } else {
     log('AUTOSYNC_DISABLED', { id: p.id });
   }
@@ -693,9 +712,7 @@ app.get('/api/autosync/status', (_req, res) => {
   const active = profiles.filter(p => p.autoSync).map(p => ({
     id: p.id,
     name: p.name,
-    connectCampaignName:   p.connectCampaignName   || '',
-    messageCampaignName:   p.messageCampaignName   || '',
-    voiceNoteCampaignName: p.voiceNoteCampaignName || '',
+    mappedSequences: Object.keys(p.sequenceMappings || {}).length,
     ...autoSyncStatus[p.id],
   }));
   res.json({ status: active });
@@ -741,9 +758,10 @@ async function runAutoSyncForProfile(profile) {
   log('AUTOSYNC_START', { profileId: profile.id, name: profile.name });
 
   try {
-    if (!profile.outreachUserId) {
-      log('AUTOSYNC_SKIP', { profileId: profile.id, reason: 'no outreachUserId set — unlock profile and select your Outreach user' });
-      autoSyncStatus[profile.id] = { lastRun: new Date().toISOString(), lastCount: 0, running: false, error: 'Outreach user not selected' };
+    const mappings = profile.sequenceMappings || {};
+    if (!Object.keys(mappings).length) {
+      log('AUTOSYNC_SKIP', { profileId: profile.id, reason: 'no sequence mappings configured' });
+      autoSyncStatus[profile.id] = { lastRun: new Date().toISOString(), lastCount: 0, running: false, error: 'No sequence mappings configured' };
       return;
     }
     if (!profile.outreachAccessToken) {
@@ -751,40 +769,42 @@ async function runAutoSyncForProfile(profile) {
       autoSyncStatus[profile.id] = { lastRun: new Date().toISOString(), lastCount: 0, running: false, error: 'No Outreach token' };
       return;
     }
+    if (!profile.linkedinAccountUuid) {
+      log('AUTOSYNC_SKIP', { profileId: profile.id, reason: 'no LinkedIn account configured' });
+      autoSyncStatus[profile.id] = { lastRun: new Date().toISOString(), lastCount: 0, running: false, error: 'No LinkedIn account configured' };
+      return;
+    }
 
-    // Refresh token if needed
     const token = await getValidToken(profile);
 
-    // Load already-synced task IDs
-    const syncedTasks = readJson(SYNCED_TASKS_FILE, {});
-    const syncedSet = new Set(Object.keys(syncedTasks));
+    // Load already-synced enrollment IDs
+    const synced = readJson(SYNCED_TASKS_FILE, {});
+    const syncedSet = new Set(Object.keys(synced));
 
-    // Fetch tasks
-    const items = await fetchOutreachLinkedInTasks(token, profile.outreachUserId);
-    const newItems = items.filter(({ task }) => !syncedSet.has(String(task.id)));
+    // Fetch in parallel: active enrollments + prospects with incomplete LinkedIn tasks
+    const [enrollments, incompleteProspectIds] = await Promise.all([
+      fetchActiveEnrollments(token, mappings),
+      fetchIncompleteLinkedInProspectIds(token),
+    ]);
 
-    log('AUTOSYNC_NEW_TASKS', { profileId: profile.id, total: items.length, new: newItems.length });
+    // Keep only: not yet synced AND prospect has incomplete LinkedIn tasks
+    const toSync = enrollments.filter(e =>
+      !syncedSet.has(e.enrollmentId) && incompleteProspectIds.has(e.prospectId)
+    );
+
+    log('AUTOSYNC_TO_SYNC', { profileId: profile.id, total: enrollments.length, toSync: toSync.length });
 
     const results = [];
-    for (const { task, prospect } of newItems) {
-      const taskId   = String(task.id);
-      const action   = task.attributes?.action || '';
-      const note     = task.attributes?.note   || '';
-      const isVoiceNote = /voice\s*note/i.test(note);
-      const isConnect   = action === CONNECT_ACTION && !isVoiceNote;
-      const campaignUuid = isVoiceNote
-        ? profile.voiceNoteCampaignUuid
-        : isConnect
-          ? profile.connectCampaignUuid
-          : profile.messageCampaignUuid;
-      const campaignLabel = isVoiceNote ? 'voice note' : isConnect ? 'connect' : 'message';
+    for (const e of toSync) {
+      const { enrollmentId, sequenceId, prospect } = e;
+      const campaignUuid = mappings[sequenceId]?.srCampaignUuid;
 
       if (!prospect?.linkedInUrl) {
-        results.push({ taskId, success: false, error: 'No LinkedIn URL on prospect' });
+        results.push({ enrollmentId, success: false, error: 'No LinkedIn URL on prospect' });
         continue;
       }
       if (!campaignUuid) {
-        results.push({ taskId, success: false, error: `No ${campaignLabel} campaign configured` });
+        results.push({ enrollmentId, success: false, error: 'No SalesRobot campaign mapped for this sequence' });
         continue;
       }
 
@@ -795,41 +815,29 @@ async function runAutoSyncForProfile(profile) {
             method: 'POST',
             headers: { 'x-api-key': profile.srKey, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              profileUrl: prospect.linkedInUrl,
-              firstName: prospect.firstName || '',
-              lastName: prospect.lastName || '',
-              fullName: [prospect.firstName, prospect.lastName].filter(Boolean).join(' '),
-              emailId: (Array.isArray(prospect.emails) ? prospect.emails[0]?.email : '') || '',
-              jobTitle: prospect.title || '',
+              profileUrl:  prospect.linkedInUrl,
+              firstName:   prospect.firstName   || '',
+              lastName:    prospect.lastName    || '',
+              fullName:    [prospect.firstName, prospect.lastName].filter(Boolean).join(' '),
+              emailId:     (Array.isArray(prospect.emails) ? prospect.emails[0]?.email : '') || '',
+              jobTitle:    prospect.title   || '',
               companyName: prospect.company || '',
-              phoneNo: '',
-              profilePhoto: '',
-              salesNavUrl: null,
+              phoneNo: '', profilePhoto: '', salesNavUrl: null,
             }),
           }
         );
         const raw = await r.text();
         if (!r.ok) throw new Error(`SalesRobot HTTP ${r.status}: ${raw}`);
 
-        // Mark complete in Outreach
-        try {
-          await fetch(`${OUTREACH_BASE}/api/v2/tasks/${taskId}/actions/markComplete`, {
-            method: 'POST',
-            headers: outreachHeaders(token),
-          });
-        } catch (e) {
-          log('MARK_COMPLETE_FAIL', { taskId, error: e.message });
-        }
-
-        syncedTasks[taskId] = { syncedAt: new Date().toISOString(), campaignUuid };
-        results.push({ taskId, success: true });
+        synced[enrollmentId] = { syncedAt: new Date().toISOString(), campaignUuid, sequenceId };
+        results.push({ enrollmentId, success: true });
       } catch (e) {
-        log('AUTOSYNC_TASK_ERROR', { taskId, error: e.message });
-        results.push({ taskId, success: false, error: e.message });
+        log('AUTOSYNC_ENROLL_ERROR', { enrollmentId, error: e.message });
+        results.push({ enrollmentId, success: false, error: e.message });
       }
     }
 
-    writeJson(SYNCED_TASKS_FILE, syncedTasks);
+    writeJson(SYNCED_TASKS_FILE, synced);
 
     const succeeded = results.filter(r => r.success).length;
     if (results.length > 0) {
@@ -839,8 +847,7 @@ async function runAutoSyncForProfile(profile) {
         timestamp: new Date().toISOString(),
         profileName: profile.name,
         linkedinAccountName: profile.linkedinAccountName || '',
-        connectCampaign: profile.connectCampaignName || '',
-        messageCampaign: profile.messageCampaignName || '',
+        mappedSequences: Object.keys(mappings).length,
         total: results.length,
         succeeded,
         failed: results.length - succeeded,
@@ -850,12 +857,7 @@ async function runAutoSyncForProfile(profile) {
       writeJson(HISTORY_FILE, runs);
     }
 
-    autoSyncStatus[profile.id] = {
-      lastRun: new Date().toISOString(),
-      lastCount: succeeded,
-      running: false,
-      error: null,
-    };
+    autoSyncStatus[profile.id] = { lastRun: new Date().toISOString(), lastCount: succeeded, running: false, error: null };
     log('AUTOSYNC_DONE', { profileId: profile.id, synced: succeeded, failed: results.length - succeeded });
   } catch (e) {
     log('AUTOSYNC_ERROR', { profileId: profile.id, error: e.message });
