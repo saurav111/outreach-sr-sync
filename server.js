@@ -326,42 +326,36 @@ app.post('/api/debug/raw-tasks', async (req, res) => {
   }
 });
 
-// Detect org users from tasks
+// Detect org users directly from /api/v2/users (paginated)
 app.post('/api/outreach/detect-users', async (req, res) => {
   const { accessToken } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
 
   try {
-    // Fetch page 1 of tasks (no owner filter) to collect unique user IDs
-    const r = await fetch(
-      `${OUTREACH_BASE}/api/v2/tasks?page[size]=100&fields[task]=taskType&include=owner&fields[user]=firstName,lastName,email`,
-      { headers: outreachHeaders(accessToken) }
-    );
-    const data = await safeJson(r);
-    if (!r.ok || !data) return res.status(400).json({ error: `Outreach error (HTTP ${r.status})` });
+    const allUsers = [];
+    let nextUrl = `${OUTREACH_BASE}/api/v2/users?page[size]=100&fields[user]=firstName,lastName,email`;
+    let page = 0;
 
-    const userMap = {};
-    for (const inc of (data.included || [])) {
-      if (inc.type === 'user') {
-        const a = inc.attributes || {};
-        userMap[inc.id] = {
-          id: String(inc.id),
-          name: [a.firstName, a.lastName].filter(Boolean).join(' ') || String(inc.id),
+    while (nextUrl && page < 10) {
+      page++;
+      const r = await fetch(nextUrl, { headers: outreachHeaders(accessToken) });
+      const data = await safeJson(r);
+      if (!r.ok || !data) return res.status(400).json({ error: `Outreach error (HTTP ${r.status})` });
+
+      for (const u of (data.data || [])) {
+        const a = u.attributes || {};
+        allUsers.push({
+          id:    String(u.id),
+          name:  [a.firstName, a.lastName].filter(Boolean).join(' ') || String(u.id),
           email: a.email || '',
-        };
+        });
       }
-    }
-    // Also collect from task owner relationships
-    for (const task of (data.data || [])) {
-      const ownerId = task.relationships?.owner?.data?.id;
-      if (ownerId && !userMap[ownerId]) {
-        userMap[ownerId] = { id: String(ownerId), name: String(ownerId), email: '' };
-      }
+
+      nextUrl = data.links?.next || null;
     }
 
-    const users = Object.values(userMap);
-    log('DETECT_USERS', { count: users.length });
-    res.json({ users });
+    log('DETECT_USERS', { count: allUsers.length });
+    res.json({ users: allUsers });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
