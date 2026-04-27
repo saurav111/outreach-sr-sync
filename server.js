@@ -103,7 +103,7 @@ app.post('/api/oauth/initiate', (_req, res) => {
   const state = crypto.randomUUID();
   pendingOAuth[state] = { done: false };
 
-  const scopes = 'tasks.all prospects.read users.read sequences.read';
+  const scopes = 'tasks.all prospects.read users.read sequences.read sequenceStates.read';
   const url = `${OUTREACH_BASE}/oauth/authorize` +
     `?client_id=${encodeURIComponent(OUTREACH_CLIENT_ID)}` +
     `&redirect_uri=${encodeURIComponent(OUTREACH_REDIRECT_URI)}` +
