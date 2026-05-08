@@ -150,7 +150,10 @@
             </button>
             <span id="autoCreateProgress" class="text-xs text-gray-400 hidden"></span>
           </div>
+          <input id="seqSearchInput" type="text" placeholder="Search sequences…" oninput="onSeqSearch()"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           <div id="sequenceMappingTable" class="space-y-2"></div>
+          <div id="seqPagination" class="flex items-center justify-between text-xs text-gray-500"></div>
           <button onclick="saveMapping()"
             class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">
             Save mapping &amp; continue
@@ -687,12 +690,38 @@
       }
     }
 
+    const SEQ_PAGE_SIZE = 10;
+    let seqCurrentPage = 1;
+    let seqFiltered = [];
+
     function renderMappingTable(sequences) {
+      seqFiltered = sequences;
+      seqCurrentPage = 1;
+      document.getElementById('seqSearchInput').value = '';
+      renderSeqPage();
+    }
+
+    function onSeqSearch() {
+      const q = document.getElementById('seqSearchInput').value.toLowerCase();
+      seqFiltered = q
+        ? (state.outreachSequences || []).filter(s => s.name.toLowerCase().includes(q))
+        : (state.outreachSequences || []);
+      seqCurrentPage = 1;
+      renderSeqPage();
+    }
+
+    function renderSeqPage() {
+      const total = seqFiltered.length;
+      const totalPages = Math.max(1, Math.ceil(total / SEQ_PAGE_SIZE));
+      seqCurrentPage = Math.min(seqCurrentPage, totalPages);
+      const start = (seqCurrentPage - 1) * SEQ_PAGE_SIZE;
+      const page  = seqFiltered.slice(start, start + SEQ_PAGE_SIZE);
+
       const srOpts = state.srCampaigns.map(c =>
         `<option value="${escHtml(c.uuid)}" data-name="${escHtml(c.name)}">${escHtml(c.name)}</option>`
       ).join('');
 
-      document.getElementById('sequenceMappingTable').innerHTML = sequences.map(seq =>
+      document.getElementById('sequenceMappingTable').innerHTML = page.map(seq =>
         `<div class="flex items-center gap-2" data-seq-id="${escHtml(seq.id)}">
           <input type="checkbox" class="seq-checkbox rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" data-seq-id="${escHtml(seq.id)}" />
           <span class="flex-1 text-sm text-gray-700 truncate" title="${escHtml(seq.name)}">${escHtml(seq.name)}</span>
@@ -716,6 +745,24 @@
           sel.value = state.sequenceMappings[seqId].srCampaignUuid;
         }
       });
+
+      // Pagination controls
+      const pag = document.getElementById('seqPagination');
+      if (totalPages <= 1) { pag.innerHTML = `<span>${total} sequence${total !== 1 ? 's' : ''}</span>`; return; }
+      pag.innerHTML = `
+        <span>${start + 1}–${Math.min(start + SEQ_PAGE_SIZE, total)} of ${total}</span>
+        <div class="flex items-center gap-1">
+          <button onclick="seqGoPage(${seqCurrentPage - 1})" ${seqCurrentPage === 1 ? 'disabled' : ''}
+            class="px-2 py-1 border border-gray-300 rounded text-xs disabled:opacity-40 hover:bg-gray-50">Prev</button>
+          <span class="px-2">Page ${seqCurrentPage} / ${totalPages}</span>
+          <button onclick="seqGoPage(${seqCurrentPage + 1})" ${seqCurrentPage === totalPages ? 'disabled' : ''}
+            class="px-2 py-1 border border-gray-300 rounded text-xs disabled:opacity-40 hover:bg-gray-50">Next</button>
+        </div>`;
+    }
+
+    function seqGoPage(page) {
+      seqCurrentPage = page;
+      renderSeqPage();
     }
 
     async function createCampaignForRow(btn, seqId, seqName) {
