@@ -776,8 +776,8 @@ app.post('/api/auto-create-campaign', async (req, res) => {
         const data = await safeJson(r);
         if (r.ok && data?.data) {
           const a = data.data.attributes || {};
-          templateMap[tid] = a.bodyHtml || a.bodyText || a.body || '';
-          log('TEMPLATE_FETCHED', { tid, bodyPreview: (templateMap[tid] || '').slice(0, 200) });
+          log('TEMPLATE_ATTRS', { tid, attributes: a }); // log all attrs to find the right field
+          templateMap[tid] = a.bodyHtml || a.bodyText || a.body || a.note || a.taskNote || a.message || '';
         } else {
           log('TEMPLATE_FETCH_ERROR', { tid, status: r.status });
         }
