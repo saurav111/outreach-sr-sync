@@ -745,7 +745,12 @@ app.post('/api/auto-create-campaign', async (req, res) => {
     while (nextUrl) {
       const r = await fetch(nextUrl, { headers: outreachHeaders(accessToken) });
       const data = await safeJson(r);
-      if (!r.ok || !data) break; // non-fatal — campaign was created, steps may be empty
+      if (!r.ok || !data) {
+        log('SEQUENCE_STEPS_HTTP_ERROR', { sequenceId, status: r?.status });
+        break;
+      }
+      // Log raw steps so we can inspect attribute names and message copy
+      log('SEQUENCE_STEPS_RAW', { sequenceId, sequenceName, rawSteps: (data.data || []).map(s => ({ id: s.id, attributes: s.attributes, relationships: s.relationships })) });
       for (const step of (data.data || [])) {
         const a      = step.attributes || {};
         const action = a.action || a.taskType || '';
@@ -760,7 +765,7 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       nextUrl = data.links?.next || null;
     }
     allSteps.sort((a, b) => a.order - b.order);
-    log('SEQUENCE_STEPS_FETCHED', { sequenceId, linkedInSteps: allSteps.length });
+    log('SEQUENCE_STEPS_FETCHED', { sequenceId, sequenceName, linkedInSteps: allSteps.length, steps: allSteps });
 
     // 3. Add steps to SR campaign (only if there are LinkedIn steps)
     let stepsAdded = 0;

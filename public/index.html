@@ -135,10 +135,14 @@
         <!-- Sequence mapping table — populated after account is selected -->
         <div id="sequenceMappingArea" class="hidden space-y-2">
           <p class="text-xs text-gray-500">For each Outreach sequence you want to sync, pick the SalesRobot campaign to enroll leads into. Leave blank to skip a sequence.</p>
-          <div class="flex items-center gap-3">
-            <button onclick="autoCreateCampaigns()" id="autoCreateBtn"
+          <div class="flex items-center gap-3 flex-wrap">
+            <button onclick="autoCreateCampaigns(false)" id="autoCreateBtn"
               class="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-medium rounded-lg transition-colors">
               Auto-create SR campaigns from sequences
+            </button>
+            <button onclick="autoCreateCampaigns(true)" id="autoCreateSelectedBtn"
+              class="px-3 py-1.5 bg-indigo-50 border border-indigo-300 hover:bg-indigo-100 text-indigo-700 text-xs font-medium rounded-lg transition-colors">
+              Create for selected
             </button>
             <span id="autoCreateProgress" class="text-xs text-gray-400 hidden"></span>
           </div>
@@ -668,6 +672,7 @@
 
       document.getElementById('sequenceMappingTable').innerHTML = sequences.map(seq =>
         `<div class="flex items-center gap-2" data-seq-id="${escHtml(seq.id)}">
+          <input type="checkbox" class="seq-checkbox rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" data-seq-id="${escHtml(seq.id)}" />
           <span class="flex-1 text-sm text-gray-700 truncate" title="${escHtml(seq.name)}">${escHtml(seq.name)}</span>
           <select class="sr-campaign-sel w-56 px-2 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
             data-seq-id="${escHtml(seq.id)}" data-seq-name="${escHtml(seq.name)}">
@@ -686,11 +691,25 @@
       });
     }
 
-    async function autoCreateCampaigns() {
+    async function autoCreateCampaigns(selectedOnly = false) {
       const btn      = document.getElementById('autoCreateBtn');
       const progress = document.getElementById('autoCreateProgress');
-      const sequences = state.outreachSequences || [];
-      if (!sequences.length) return;
+      const allSequences = state.outreachSequences || [];
+      if (!allSequences.length) return;
+
+      // If selectedOnly, use only checked sequences
+      let sequences = allSequences;
+      if (selectedOnly) {
+        const checkedIds = new Set(
+          [...document.querySelectorAll('.seq-checkbox:checked')].map(cb => cb.dataset.seqId)
+        );
+        if (!checkedIds.size) {
+          progress.textContent = 'No sequences selected — check the boxes next to the sequences you want.';
+          progress.classList.remove('hidden');
+          return;
+        }
+        sequences = allSequences.filter(s => checkedIds.has(s.id));
+      }
 
       // Skip sequences that already have an SR campaign with the same name
       const existingNames = new Set(state.srCampaigns.map(c => c.name.toLowerCase()));
