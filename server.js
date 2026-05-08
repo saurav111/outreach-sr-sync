@@ -38,10 +38,11 @@ const LINKEDIN_ACTIONS = new Set([
 const CONNECT_ACTION = 'linkedin_send_connection_request';
 
 // ── File paths ────────────────────────────────────────────────────────────────
-const PROFILES_FILE     = path.join(__dirname, 'profiles.json');
-const HISTORY_FILE      = path.join(__dirname, 'history.json');
-const SYNCED_TASKS_FILE = path.join(__dirname, 'synced_tasks.json');
-const LOG_FILE          = path.join(__dirname, 'sync.log');
+const DATA_DIR          = '/var/data';
+const PROFILES_FILE     = path.join(DATA_DIR, 'profiles.json');
+const HISTORY_FILE      = path.join(DATA_DIR, 'history.json');
+const SYNCED_TASKS_FILE = path.join(DATA_DIR, 'synced_tasks.json');
+const LOG_FILE          = path.join(DATA_DIR, 'sync.log');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function readJson(file, fallback) {
