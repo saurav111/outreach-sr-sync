@@ -135,6 +135,13 @@
         <!-- Sequence mapping table — populated after account is selected -->
         <div id="sequenceMappingArea" class="hidden space-y-2">
           <p class="text-xs text-gray-500">For each Outreach sequence you want to sync, pick the SalesRobot campaign to enroll leads into. Leave blank to skip a sequence.</p>
+          <div class="flex items-center gap-3">
+            <button onclick="autoCreateCampaigns()" id="autoCreateBtn"
+              class="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-medium rounded-lg transition-colors">
+              Auto-create SR campaigns from sequences
+            </button>
+            <span id="autoCreateProgress" class="text-xs text-gray-400 hidden"></span>
+          </div>
           <div id="sequenceMappingTable" class="space-y-2"></div>
           <button onclick="saveMapping()"
             class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">
@@ -213,7 +220,8 @@
       linkedinAccountUuid: '', linkedinAccountName: '',
       // sequenceMappings: { [outreachSequenceId]: { srCampaignUuid, srCampaignName } }
       sequenceMappings: {},
-      srCampaigns: [], // cached SR campaign list for the mapping UI
+      srCampaigns: [],        // cached SR campaign list for the mapping UI
+      outreachSequences: [],  // cached sequences for auto-create
       currentProfileId: null,
       tasks: [], // current fetch result
     };
@@ -644,6 +652,7 @@
 
         state.srCampaigns = srData.campaigns || [];
         const sequences   = seqData.sequences || [];
+        state.outreachSequences = sequences;
 
         renderMappingTable(sequences);
         mappingArea.classList.remove('hidden');
@@ -675,6 +684,76 @@
           sel.value = state.sequenceMappings[seqId].srCampaignUuid;
         }
       });
+    }
+
+    async function autoCreateCampaigns() {
+      const btn      = document.getElementById('autoCreateBtn');
+      const progress = document.getElementById('autoCreateProgress');
+      const sequences = state.outreachSequences || [];
+      if (!sequences.length) return;
+
+      // Skip sequences that already have an SR campaign with the same name
+      const existingNames = new Set(state.srCampaigns.map(c => c.name.toLowerCase()));
+      const toCreate = sequences.filter(s => !existingNames.has(s.name.toLowerCase()));
+
+      if (!toCreate.length) {
+        progress.textContent = 'All sequences already have matching campaigns.';
+        progress.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Creating...';
+      progress.textContent = `0 / ${toCreate.length}`;
+      progress.classList.remove('hidden');
+
+      let created = 0, failed = 0;
+      const newCampaigns = [];
+
+      for (const seq of toCreate) {
+        try {
+          const r = await fetch('/api/auto-create-campaign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              srKey:               state.srKey,
+              linkedinAccountUuid: state.linkedinAccountUuid,
+              accessToken:         state.outreachAccessToken,
+              sequenceId:          seq.id,
+              sequenceName:        seq.name,
+            }),
+          });
+          const data = await r.json();
+          if (r.ok && data.uuid) {
+            newCampaigns.push({ uuid: data.uuid, name: seq.name, sequenceId: seq.id, stepsAdded: data.stepsAdded });
+            created++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
+        progress.textContent = `${created + failed} / ${toCreate.length}`;
+      }
+
+      // Add new campaigns to state and update all dropdowns
+      const newOpts = newCampaigns.map(c =>
+        `<option value="${escHtml(c.uuid)}" data-name="${escHtml(c.name)}">${escHtml(c.name)}</option>`
+      ).join('');
+
+      state.srCampaigns.push(...newCampaigns.map(c => ({ uuid: c.uuid, name: c.name, status: 'ACTIVE' })));
+
+      document.querySelectorAll('.sr-campaign-sel').forEach(sel => {
+        sel.insertAdjacentHTML('beforeend', newOpts);
+        const seqId = sel.dataset.seqId;
+        const match = newCampaigns.find(c => c.sequenceId === seqId);
+        if (match && !sel.value) sel.value = match.uuid;
+      });
+
+      const totalSteps = newCampaigns.reduce((s, c) => s + (c.stepsAdded || 0), 0);
+      progress.textContent = `Done: ${created} campaigns created, ${totalSteps} steps added${failed ? ` (${failed} failed)` : ''}`;
+      btn.disabled = false;
+      btn.textContent = 'Auto-create SR campaigns from sequences';
     }
 
     function saveMapping() {

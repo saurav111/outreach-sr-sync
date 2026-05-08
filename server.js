@@ -37,6 +37,31 @@ const LINKEDIN_ACTIONS = new Set([
 
 const CONNECT_ACTION = 'linkedin_send_connection_request';
 
+// Outreach action → SalesRobot step type
+const OUTREACH_TO_SR_STEP = {
+  'linkedin_send_connection_request': 'SEND_CONNECTION_REQUEST',
+  'linkedin_send_message':            'SEND_MESSAGE',
+  'linkedin_view_profile':            'VIEW_PROFILE',
+  'linkedin_interact_with_post':      'VIEW_PROFILE',
+  'linkedin_other':                   'SEND_MESSAGE',
+};
+
+// Convert Outreach template variables to SalesRobot format
+function convertVariables(text) {
+  if (!text) return '';
+  return text
+    .replace(/\{\{prospect\.firstName\}\}/gi, '{{firstName}}')
+    .replace(/\{\{prospect\.lastName\}\}/gi,  '{{lastName}}')
+    .replace(/\{\{prospect\.company\}\}/gi,   '{{companyName}}')
+    .replace(/\{\{prospect\.title\}\}/gi,     '{{jobTitle}}')
+    .replace(/\{\{prospect\.email\}\}/gi,     '{{emailId}}')
+    .replace(/\{\{company\}\}/gi,             '{{companyName}}')
+    .replace(/\{\{title\}\}/gi,               '{{jobTitle}}')
+    .replace(/\{\{email\}\}/gi,               '{{emailId}}')
+    // {{firstName}}, {{lastName}} already match SR format — leave as-is
+    ;
+}
+
 // ── File paths ────────────────────────────────────────────────────────────────
 const DATA_DIR          = '/var/data';
 const PROFILES_FILE     = path.join(DATA_DIR, 'profiles.json');
@@ -652,6 +677,127 @@ app.post('/api/salesrobot/campaigns', async (req, res) => {
     log('CAMPAIGNS_FETCHED', { total: out.length });
     res.json({ campaigns: out });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/salesrobot/create-campaign', async (req, res) => {
+  const { srKey, linkedinAccountUuid, campaignName } = req.body;
+  if (!srKey || !linkedinAccountUuid || !campaignName) {
+    return res.status(400).json({ error: 'srKey, linkedinAccountUuid, campaignName required' });
+  }
+
+  try {
+    const r = await fetch(
+      `${SR_API_BASE}/api/campaign?linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': srKey },
+        body: JSON.stringify({
+          campaignName,
+          campaignType: 'ADVANCED',
+          campaignFamily: 'LINKEDIN',
+          linkedinAccountUuid,
+        }),
+      }
+    );
+    const data = await r.json();
+    if (!data.success) return res.status(400).json({ error: data.message || `HTTP ${r.status}` });
+    log('CREATE_CAMPAIGN', { campaignName, uuid: data.data });
+    res.json({ uuid: data.data, name: campaignName });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Create SR campaign + populate steps from the matching Outreach sequence
+app.post('/api/auto-create-campaign', async (req, res) => {
+  const { srKey, linkedinAccountUuid, accessToken, sequenceId, sequenceName } = req.body;
+  if (!srKey || !linkedinAccountUuid || !accessToken || !sequenceId || !sequenceName) {
+    return res.status(400).json({ error: 'srKey, linkedinAccountUuid, accessToken, sequenceId, sequenceName required' });
+  }
+
+  try {
+    // 1. Create the SR campaign
+    const createRes = await fetch(
+      `${SR_API_BASE}/api/campaign?linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': srKey },
+        body: JSON.stringify({
+          campaignName: sequenceName,
+          campaignType: 'ADVANCED',
+          campaignFamily: 'LINKEDIN',
+          linkedinAccountUuid,
+        }),
+      }
+    );
+    const createData = await createRes.json();
+    if (!createData.success) {
+      return res.status(400).json({ error: createData.message || `SR campaign create failed (HTTP ${createRes.status})` });
+    }
+    const campaignUuid = createData.data;
+    log('CREATE_CAMPAIGN', { sequenceName, campaignUuid });
+
+    // 2. Fetch Outreach sequence steps
+    const allSteps = [];
+    let nextUrl = `${OUTREACH_BASE}/api/v2/sequenceSteps?filter[sequence][id]=${sequenceId}&page[size]=100`;
+    while (nextUrl) {
+      const r = await fetch(nextUrl, { headers: outreachHeaders(accessToken) });
+      const data = await safeJson(r);
+      if (!r.ok || !data) break; // non-fatal — campaign was created, steps may be empty
+      for (const step of (data.data || [])) {
+        const a      = step.attributes || {};
+        const action = a.action || a.taskType || '';
+        if (!LINKEDIN_ACTIONS.has(action)) continue;
+        allSteps.push({
+          order:     a.order    ?? allSteps.length + 1,
+          interval:  a.interval ?? 0, // days between steps
+          action,
+          taskNote:  a.taskNote || '',
+        });
+      }
+      nextUrl = data.links?.next || null;
+    }
+    allSteps.sort((a, b) => a.order - b.order);
+    log('SEQUENCE_STEPS_FETCHED', { sequenceId, linkedInSteps: allSteps.length });
+
+    // 3. Add steps to SR campaign (only if there are LinkedIn steps)
+    let stepsAdded = 0;
+    if (allSteps.length > 0) {
+      const sequenceStepDTOList = allSteps.map((step, i) => ({
+        hoursDelay:       i === 0 ? 0 : (step.interval || 1) * 24,
+        sequenceStepType: OUTREACH_TO_SR_STEP[step.action] || 'SEND_MESSAGE',
+        stepOrdinal:      i + 1,
+        multiVariateMails: [{ body: convertVariables(step.taskNote) }],
+      }));
+
+      const stepsRes = await fetch(
+        `${SR_API_BASE}/api/sequence/save/from-steps?linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': srKey },
+          body: JSON.stringify({
+            sequenceStepDTOList,
+            campaignUuid,
+            selectedAccountType: 'LINKEDIN_ACCOUNT',
+            campaignType: 'ADVANCED',
+            deleteExistingConditionalSequence: false,
+          }),
+        }
+      );
+      const stepsData = await stepsRes.json();
+      if (stepsData.success) {
+        stepsAdded = allSteps.length;
+        log('SEQUENCE_STEPS_ADDED', { campaignUuid, stepsAdded });
+      } else {
+        log('SEQUENCE_STEPS_ERROR', { campaignUuid, error: stepsData.message });
+      }
+    }
+
+    res.json({ uuid: campaignUuid, name: sequenceName, stepsAdded });
+  } catch (e) {
+    log('AUTO_CREATE_CAMPAIGN_ERROR', { sequenceName, error: e.message });
     res.status(500).json({ error: e.message });
   }
 });
