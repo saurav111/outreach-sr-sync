@@ -739,9 +739,10 @@ app.post('/api/auto-create-campaign', async (req, res) => {
     const campaignUuid = createData.data;
     log('CREATE_CAMPAIGN', { sequenceName, campaignUuid });
 
-    // 2. Fetch Outreach sequence steps
+    // 2. Fetch Outreach sequence steps + included sequenceTemplates in one request
     const allSteps = [];
-    let nextUrl = `${OUTREACH_BASE}/api/v2/sequenceSteps?filter[sequence][id]=${sequenceId}&page[size]=100`;
+    // include=sequenceTemplates pulls message body alongside steps — avoids N+1 fetches
+    let nextUrl = `${OUTREACH_BASE}/api/v2/sequenceSteps?filter[sequence][id]=${sequenceId}&include=sequenceTemplates&page[size]=100`;
     while (nextUrl) {
       const r = await fetch(nextUrl, { headers: outreachHeaders(accessToken) });
       const data = await safeJson(r);
@@ -749,17 +750,31 @@ app.post('/api/auto-create-campaign', async (req, res) => {
         log('SEQUENCE_STEPS_HTTP_ERROR', { sequenceId, status: r?.status });
         break;
       }
-      // Log raw steps so we can inspect attribute names and message copy
-      log('SEQUENCE_STEPS_RAW', { sequenceId, sequenceName, rawSteps: (data.data || []).map(s => ({ id: s.id, attributes: s.attributes, relationships: s.relationships })) });
+
+      // Build a map of sequenceTemplate id → body from the included array
+      const templateMap = {};
+      for (const inc of (data.included || [])) {
+        if (inc.type === 'sequenceTemplate') {
+          // body may be in bodyHtml, bodyText, or body
+          templateMap[inc.id] = inc.attributes?.bodyHtml || inc.attributes?.bodyText || inc.attributes?.body || '';
+        }
+      }
+      log('SEQUENCE_STEPS_RAW', { sequenceId, sequenceName, templateMap, rawSteps: (data.data || []).map(s => ({ id: s.id, attributes: s.attributes, relationships: s.relationships })) });
+
       for (const step of (data.data || [])) {
         const a      = step.attributes || {};
-        const action = a.action || a.taskType || '';
+        const action = a.stepType || ''; // field is stepType, not action/taskType
         if (!LINKEDIN_ACTIONS.has(action)) continue;
+
+        // Get message body from the linked sequenceTemplate (if any)
+        const templateIds = (step.relationships?.sequenceTemplates?.data || []).map(t => t.id);
+        const body = templateIds.map(id => templateMap[id] || '').filter(Boolean).join(' ') || a.taskNote || '';
+
         allSteps.push({
-          order:     a.order    ?? allSteps.length + 1,
-          interval:  a.interval ?? 0, // days between steps
+          order:    a.order ?? allSteps.length + 1,
+          interval: a.interval ?? 0, // seconds — divide by 3600 for hours
           action,
-          taskNote:  a.taskNote || '',
+          body,
         });
       }
       nextUrl = data.links?.next || null;
@@ -771,10 +786,10 @@ app.post('/api/auto-create-campaign', async (req, res) => {
     let stepsAdded = 0;
     if (allSteps.length > 0) {
       const sequenceStepDTOList = allSteps.map((step, i) => ({
-        hoursDelay:       i === 0 ? 0 : (step.interval || 1) * 24,
+        hoursDelay:       i === 0 ? 0 : Math.round((step.interval || 86400) / 3600), // seconds → hours
         sequenceStepType: OUTREACH_TO_SR_STEP[step.action] || 'SEND_MESSAGE',
         stepOrdinal:      i + 1,
-        multiVariateMails: [{ body: convertVariables(step.taskNote) }],
+        multiVariateMails: [{ body: convertVariables(step.body) }],
       }));
 
       const stepsRes = await fetch(
