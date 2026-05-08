@@ -892,7 +892,7 @@ app.post('/api/profiles', async (req, res) => {
   res.json({ success: true, id, name: name.trim() });
 });
 
-app.post('/api/profiles/:id/unlock', (req, res) => {
+app.post('/api/profiles/:id/unlock', async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Password required' });
   const profiles = readJson(PROFILES_FILE, []);
@@ -901,14 +901,25 @@ app.post('/api/profiles/:id/unlock', (req, res) => {
   if (!bcrypt.compareSync(password, p.passwordHash)) {
     return res.status(401).json({ error: 'Incorrect password' });
   }
+
+  // Always return a fresh token — refresh silently if expired
+  if (p.outreachRefreshToken) {
+    try {
+      await getValidToken(p); // refreshes and persists if needed
+    } catch (e) {
+      log('UNLOCK_REFRESH_FAILED', { id: p.id, error: e.message });
+      // Non-fatal: return whatever token we have; user may need to reconnect if refresh fails
+    }
+  }
+
   log('PROFILE_UNLOCKED', { id: p.id, name: p.name });
   res.json({
     srKey: p.srKey,
-    outreachAccessToken: p.outreachAccessToken || null,
+    outreachAccessToken:  p.outreachAccessToken  || null,
     outreachRefreshToken: p.outreachRefreshToken || null,
-    outreachTokenExpiry: p.outreachTokenExpiry || null,
-    outreachUserId: p.outreachUserId || null,
-    outreachUserName: p.outreachUserName || null,
+    outreachTokenExpiry:  p.outreachTokenExpiry  || null,
+    outreachUserId:       p.outreachUserId       || null,
+    outreachUserName:     p.outreachUserName     || null,
   });
 });
 
