@@ -56,10 +56,14 @@
             <button onclick="detectOutreachUsers()" id="detectUsersBtn"
               class="text-xs text-indigo-600 hover:underline">Detect</button>
           </div>
-          <select id="outreachUserSelect" onchange="onUserSelect()"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            <option value="">— click Detect to load users —</option>
-          </select>
+          <div id="outreachUserPickerWrap" class="hidden space-y-1">
+            <input id="outreachUserSearch" type="text" placeholder="Search by name or email…"
+              oninput="filterUserList()"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <select id="outreachUserSelect" onchange="onUserSelect()" size="6"
+              class="w-full px-2 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            </select>
+          </div>
           <p id="outreachUserMsg" class="text-xs text-gray-400">Required for accurate task filtering.</p>
         </div>
       </div>
@@ -339,8 +343,11 @@
         document.getElementById('outreachStatus').className = 'text-sm text-green-600';
         document.getElementById('outreachUserRow').classList.remove('hidden');
         if (data.outreachUserId) {
-          const sel = document.getElementById('outreachUserSelect');
-          sel.innerHTML = `<option value="${escHtml(data.outreachUserId)}" selected>${escHtml(data.outreachUserName || data.outreachUserId)}</option>`;
+          // Pre-populate picker with the saved user so they don't need to re-detect
+          allOutreachUsers = [{ id: data.outreachUserId, name: data.outreachUserName || data.outreachUserId, email: '' }];
+          document.getElementById('outreachUserPickerWrap').classList.remove('hidden');
+          renderUserList(allOutreachUsers);
+          document.getElementById('outreachUserSelect').value = data.outreachUserId;
         }
       }
     }
@@ -528,14 +535,13 @@
       } catch { /* ignore */ }
     }
 
+    let allOutreachUsers = [];
+
     async function detectOutreachUsers() {
-      const btn  = document.getElementById('detectUsersBtn');
-      const sel  = document.getElementById('outreachUserSelect');
-      const msgEl = document.getElementById('outreachUserMsg');
-      if (!state.outreachAccessToken) {
-        msgEl.textContent = 'Connect Outreach first.';
-        return;
-      }
+      const btn    = document.getElementById('detectUsersBtn');
+      const msgEl  = document.getElementById('outreachUserMsg');
+      const wrap   = document.getElementById('outreachUserPickerWrap');
+      if (!state.outreachAccessToken) { msgEl.textContent = 'Connect Outreach first.'; return; }
       btn.textContent = 'Loading…';
       btn.disabled = true;
       try {
@@ -546,20 +552,36 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        const users = data.users || [];
-        if (!users.length) {
-          msgEl.textContent = 'No users found. Make sure you have tasks in Outreach.';
-          return;
-        }
-        sel.innerHTML = '<option value="">— select yourself —</option>' +
-          users.map(u => `<option value="${escHtml(u.id)}" data-name="${escHtml(u.name)}">${escHtml(u.name)}${u.email ? ' (' + escHtml(u.email) + ')' : ''}</option>`).join('');
-        msgEl.textContent = `${users.length} user${users.length !== 1 ? 's' : ''} found. Select yourself.`;
+        allOutreachUsers = data.users || [];
+        if (!allOutreachUsers.length) { msgEl.textContent = 'No users found.'; return; }
+        wrap.classList.remove('hidden');
+        renderUserList(allOutreachUsers);
+        msgEl.textContent = `${allOutreachUsers.length} users — type to search, then click your name.`;
       } catch (e) {
         msgEl.textContent = e.message;
       } finally {
         btn.textContent = 'Detect';
         btn.disabled = false;
       }
+    }
+
+    function renderUserList(users) {
+      const sel = document.getElementById('outreachUserSelect');
+      sel.innerHTML = users.map(u =>
+        `<option value="${escHtml(u.id)}" data-name="${escHtml(u.name)}">
+          ${escHtml(u.name)}${u.email ? '  —  ' + escHtml(u.email) : ''}
+        </option>`
+      ).join('');
+      // Re-select if already chosen
+      if (state.outreachUserId) sel.value = state.outreachUserId;
+    }
+
+    function filterUserList() {
+      const q = document.getElementById('outreachUserSearch').value.toLowerCase();
+      const filtered = q
+        ? allOutreachUsers.filter(u => u.name.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
+        : allOutreachUsers;
+      renderUserList(filtered);
     }
 
     function onUserSelect() {
