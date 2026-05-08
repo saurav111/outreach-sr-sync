@@ -129,7 +129,7 @@ app.post('/api/oauth/initiate', (_req, res) => {
   const state = crypto.randomUUID();
   pendingOAuth[state] = { done: false };
 
-  const scopes = 'tasks.all prospects.read users.read sequences.read sequenceSteps.read templates.read sequenceStates.read sequenceStates.write';
+  const scopes = 'tasks.all prospects.read users.read sequences.read sequenceSteps.read sequenceTemplates.read templates.read sequenceStates.read sequenceStates.write';
   const url = `${OUTREACH_BASE}/oauth/authorize` +
     `?client_id=${encodeURIComponent(OUTREACH_CLIENT_ID)}` +
     `&redirect_uri=${encodeURIComponent(OUTREACH_REDIRECT_URI)}` +
@@ -759,6 +759,7 @@ app.post('/api/auto-create-campaign', async (req, res) => {
         const templateIds = (step.relationships?.sequenceTemplates?.data || []).map(t => String(t.id));
         templateIdsNeeded.push(...templateIds);
         allSteps.push({
+          stepId:      String(step.id),
           order:       a.order ?? allSteps.length + 1,
           interval:    a.interval ?? 0, // seconds
           action,
@@ -768,21 +769,46 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       nextUrl = data.links?.next || null;
     }
 
-    // Fetch sequenceTemplates individually for each step that has one
+    // Fetch sequenceTemplates by ID
+    // NOTE: filter[sequenceStep][id] requires the Outreach sequence step ID (not template ID)
     const templateMap = {};
-    for (const tid of [...new Set(templateIdsNeeded)]) {
-      try {
-        const r = await fetch(`${OUTREACH_BASE}/api/v2/sequenceTemplates/${tid}`, { headers: outreachHeaders(accessToken) });
-        const data = await safeJson(r);
-        if (r.ok && data?.data) {
-          const a = data.data.attributes || {};
-          log('TEMPLATE_ATTRS', { tid, attributes: a }); // log all attrs to find the right field
-          templateMap[tid] = a.bodyHtml || a.bodyText || a.body || a.note || a.taskNote || a.message || '';
-        } else {
-          log('TEMPLATE_FETCH_ERROR', { tid, status: r.status });
+    for (const step of allSteps) {
+      for (const tid of step.templateIds) {
+        if (templateMap[tid] !== undefined) continue; // already fetched
+        try {
+          // Primary: fetch by template ID directly
+          const r = await fetch(`${OUTREACH_BASE}/api/v2/sequenceTemplates/${tid}`, { headers: outreachHeaders(accessToken) });
+          const raw = await r.text();
+          log('TEMPLATE_RAW_BY_ID', { stepId: step.stepId, tid, status: r.status, body: raw.slice(0, 800) });
+          let d;
+          try { d = JSON.parse(raw); } catch { d = null; }
+          if (r.ok && d?.data) {
+            const a = d.data.attributes || {};
+            // Log ALL attribute keys so we can find the right field name for LinkedIn copy
+            log('TEMPLATE_ATTRS', { tid, keys: Object.keys(a), bodyHtml: a.bodyHtml?.slice(0,100), bodyText: a.bodyText?.slice(0,100), body: a.body?.slice(0,100), note: a.note?.slice(0,100), taskNote: a.taskNote?.slice(0,100), message: a.message?.slice(0,100), subject: a.subject?.slice(0,100) });
+            templateMap[tid] = a.bodyHtml || a.bodyText || a.body || a.note || a.taskNote || a.message || '';
+          } else {
+            // Fallback: filter by sequence step ID
+            const filterUrl = `${OUTREACH_BASE}/api/v2/sequenceTemplates?filter[sequenceStep][id]=${step.stepId}&page[size]=10`;
+            const r2 = await fetch(filterUrl, { headers: outreachHeaders(accessToken) });
+            const raw2 = await r2.text();
+            log('TEMPLATE_RAW_FILTER', { stepId: step.stepId, tid, status: r2.status, body: raw2.slice(0, 800) });
+            let d2;
+            try { d2 = JSON.parse(raw2); } catch { d2 = null; }
+            if (r2.ok && d2?.data?.length) {
+              for (const t of d2.data) {
+                const a = t.attributes || {};
+                log('TEMPLATE_ATTRS_FILTER', { tid: String(t.id), keys: Object.keys(a) });
+                templateMap[String(t.id)] = a.bodyHtml || a.bodyText || a.body || a.note || a.taskNote || a.message || '';
+              }
+            } else {
+              templateMap[tid] = '';
+            }
+          }
+        } catch (e) {
+          log('TEMPLATE_FETCH_ERROR', { tid, error: e.message });
+          templateMap[tid] = '';
         }
-      } catch (e) {
-        log('TEMPLATE_FETCH_ERROR', { tid, error: e.message });
       }
     }
 
@@ -791,8 +817,6 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       step.body = step.templateIds.map(id => templateMap[id] || '').filter(Boolean).join(' ') || '';
     }
 
-    allSteps.sort((a, b) => a.order - b.order);
-    log('SEQUENCE_STEPS_FETCHED', { sequenceId, sequenceName, linkedInSteps: allSteps.length, steps: allSteps });
     allSteps.sort((a, b) => a.order - b.order);
     log('SEQUENCE_STEPS_FETCHED', { sequenceId, sequenceName, linkedInSteps: allSteps.length, steps: allSteps });
 
