@@ -891,19 +891,7 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       }
     }
 
-    // Start the campaign
-    try {
-      const startRes = await fetch(
-        `${SR_API_BASE}/api/start?campaignUuid=${encodeURIComponent(campaignUuid)}&hasInviteMessage=false&linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}`,
-        { method: 'POST', headers: { 'x-api-key': srKey, 'Content-Type': 'application/json' } }
-      );
-      const startData = await startRes.json();
-      log('CAMPAIGN_STARTED', { campaignUuid, success: startData.success, message: startData.message });
-    } catch (e) {
-      log('CAMPAIGN_START_ERROR', { campaignUuid, error: e.message });
-    }
-
-    // Add a seed prospect so the campaign initializes (duplicates off so it won't re-contact)
+    // Add a seed prospect first (campaign may require at least one lead before it can start)
     try {
       await fetch(
         `${SR_API_BASE}/api/add-single-prospect?campaignUuid=${campaignUuid}&linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}&checkDuplicates=false`,
@@ -927,7 +915,19 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       log('SEED_PROSPECT_ADDED', { campaignUuid });
     } catch (e) {
       log('SEED_PROSPECT_ERROR', { campaignUuid, error: e.message });
-      // non-blocking — don't fail the whole request
+    }
+
+    // Wait 2s for SR to finish processing steps + prospect, then start
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const startRes = await fetch(
+        `${SR_API_BASE}/api/start?campaignUuid=${encodeURIComponent(campaignUuid)}&hasInviteMessage=false&linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}`,
+        { method: 'POST', headers: { 'x-api-key': srKey, 'Content-Type': 'application/json' } }
+      );
+      const startData = await startRes.json();
+      log('CAMPAIGN_STARTED', { campaignUuid, success: startData.success, message: startData.message });
+    } catch (e) {
+      log('CAMPAIGN_START_ERROR', { campaignUuid, error: e.message });
     }
 
     res.json({ uuid: campaignUuid, name: sequenceName, stepsAdded });
