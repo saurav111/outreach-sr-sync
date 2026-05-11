@@ -783,10 +783,22 @@ app.post('/api/auto-create-campaign', async (req, res) => {
           let d;
           try { d = JSON.parse(raw); } catch { d = null; }
           if (r.ok && d?.data) {
-            const a = d.data.attributes || {};
-            // Log ALL attribute keys so we can find the right field name for LinkedIn copy
-            log('TEMPLATE_ATTRS', { tid, keys: Object.keys(a), bodyHtml: a.bodyHtml?.slice(0,100), bodyText: a.bodyText?.slice(0,100), body: a.body?.slice(0,100), note: a.note?.slice(0,100), taskNote: a.taskNote?.slice(0,100), message: a.message?.slice(0,100), subject: a.subject?.slice(0,100) });
-            templateMap[tid] = a.bodyHtml || a.bodyText || a.body || a.note || a.taskNote || a.message || '';
+            // sequenceTemplate is a stats-only junction record.
+            // The actual message copy is in relationships.template → GET /api/v2/templates/:id
+            const realTemplateId = d.data.relationships?.template?.data?.id;
+            if (realTemplateId) {
+              const r3 = await fetch(`${OUTREACH_BASE}/api/v2/templates/${realTemplateId}`, { headers: outreachHeaders(accessToken) });
+              const d3 = await safeJson(r3);
+              if (r3.ok && d3?.data) {
+                const a = d3.data.attributes || {};
+                templateMap[tid] = a.bodyHtml || a.bodyText || a.body || a.subject || '';
+                log('TEMPLATE_COPY', { tid, realTemplateId, body: templateMap[tid]?.slice(0, 200) });
+              } else {
+                templateMap[tid] = '';
+              }
+            } else {
+              templateMap[tid] = '';
+            }
           } else {
             // Fallback: filter by sequence step ID
             const filterUrl = `${OUTREACH_BASE}/api/v2/sequenceTemplates?filter[sequenceStep][id]=${step.stepId}&page[size]=10`;
