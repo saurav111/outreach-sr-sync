@@ -47,13 +47,15 @@ const OUTREACH_TO_SR_STEP = {
 };
 
 // Strip HTML tags and decode common HTML entities → plaintext
+// Outreach templates are wrapped in <div><span style="...">...</span></div>.
+// Strip tags and decode entities; preserve {{variables}} untouched.
 function htmlToPlainText(html) {
   if (!html) return '';
   return html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
     .replace(/<\/div>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
+    .replace(/<[^>]+>/g, '')   // strip all remaining tags (div, span, etc.)
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
@@ -65,31 +67,29 @@ function htmlToPlainText(html) {
 }
 
 // Convert Outreach template variables to SalesRobot format.
-// SR only supports: {{firstName}}, {{companyName}}, {{jobTitle}}
-// Everything else is stripped.
+// Known Outreach vars are mapped to SR equivalents; unknown custom vars are kept as-is.
 function convertVariables(text) {
   if (!text) return '';
-  // Map known Outreach vars → SR vars
-  // Outreach uses Liquid syntax: {{prospect.firstName | fallback: "there"}} — match greedily up to }}
-  const converted = text
+  return text
+    // Outreach dot-notation (possibly with Liquid filters: {{prospect.firstName | fallback: "there"}})
     .replace(/\{\{prospect\.firstName[^}]*\}\}/gi, '{{firstName}}')
-    .replace(/\{\{prospect\.lastName[^}]*\}\}/gi,  '{{firstName}}') // no lastName in SR — fall back to firstName
+    .replace(/\{\{prospect\.lastName[^}]*\}\}/gi,  '{{firstName}}') // no lastName in SR
     .replace(/\{\{prospect\.company[^}]*\}\}/gi,   '{{companyName}}')
     .replace(/\{\{prospect\.title[^}]*\}\}/gi,     '{{jobTitle}}')
-    .replace(/\{\{prospect\.email[^}]*\}\}/gi,     '')
-    .replace(/\{\{company[^}]*\}\}/gi,             '{{companyName}}')
-    .replace(/\{\{title[^}]*\}\}/gi,               '{{jobTitle}}')
-    .replace(/\{\{email[^}]*\}\}/gi,               '')
-    .replace(/\{\{firstName[^}]*\}\}/gi,           '{{firstName}}')
-    .replace(/\{\{lastName[^}]*\}\}/gi,            '{{firstName}}') // no lastName in SR
-    .replace(/\{\{companyName[^}]*\}\}/gi,         '{{companyName}}')
-    .replace(/\{\{jobTitle[^}]*\}\}/gi,            '{{jobTitle}}')
-    // Outreach snake_case variables (actual format used in templates)
+    .replace(/\{\{prospect\.email[^}]*\}\}/gi,     '{{emailId}}')
+    // Outreach snake_case (actual format in LinkedIn templates)
     .replace(/\{\{first_name[^}]*\}\}/gi,          '{{firstName}}')
     .replace(/\{\{last_name[^}]*\}\}/gi,           '{{firstName}}') // no lastName in SR
-    .replace(/\{\{job_title[^}]*\}\}/gi,           '{{jobTitle}}');
-  // Strip any remaining {{...}} that are NOT SR-supported variables (firstName, companyName, jobTitle)
-  return converted.replace(/\{\{(?!(firstName|companyName|jobTitle)\}\})[^}]+\}\}/g, '').replace(/  +/g, ' ').trim();
+    .replace(/\{\{company_name[^}]*\}\}/gi,        '{{companyName}}')
+    .replace(/\{\{job_title[^}]*\}\}/gi,           '{{jobTitle}}')
+    .replace(/\{\{email[^}]*\}\}/gi,               '{{emailId}}')
+    // Bare camelCase (already SR-format or close)
+    .replace(/\{\{firstName[^}]*\}\}/gi,           '{{firstName}}')
+    .replace(/\{\{lastName[^}]*\}\}/gi,            '{{firstName}}')
+    .replace(/\{\{companyName[^}]*\}\}/gi,         '{{companyName}}')
+    .replace(/\{\{jobTitle[^}]*\}\}/gi,            '{{jobTitle}}')
+    // Unknown vars are left as-is so custom variables are preserved
+    ;
 }
 
 // ── File paths ────────────────────────────────────────────────────────────────
