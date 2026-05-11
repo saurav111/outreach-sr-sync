@@ -88,8 +88,8 @@ function convertVariables(text) {
     .replace(/\{\{first_name[^}]*\}\}/gi,          '{{firstName}}')
     .replace(/\{\{last_name[^}]*\}\}/gi,           '{{firstName}}') // no lastName in SR
     .replace(/\{\{job_title[^}]*\}\}/gi,           '{{jobTitle}}');
-  // Strip any remaining {{...}} variables not supported by SR
-  return converted.replace(/\{\{[^}]+\}\}/g, '').replace(/  +/g, ' ').trim();
+  // Strip any remaining {{...}} that are NOT SR-supported variables (firstName, companyName, jobTitle)
+  return converted.replace(/\{\{(?!(firstName|companyName|jobTitle)\}\})[^}]+\}\}/g, '').replace(/  +/g, ' ').trim();
 }
 
 // ── File paths ────────────────────────────────────────────────────────────────
