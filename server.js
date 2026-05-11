@@ -70,19 +70,20 @@ function htmlToPlainText(html) {
 function convertVariables(text) {
   if (!text) return '';
   // Map known Outreach vars → SR vars
+  // Outreach uses Liquid syntax: {{prospect.firstName | fallback: "there"}} — match greedily up to }}
   const converted = text
-    .replace(/\{\{prospect\.firstName\}\}/gi, '{{firstName}}')
-    .replace(/\{\{prospect\.lastName\}\}/gi,  '{{firstName}}') // no lastName in SR — fall back to firstName
-    .replace(/\{\{prospect\.company\}\}/gi,   '{{companyName}}')
-    .replace(/\{\{prospect\.title\}\}/gi,     '{{jobTitle}}')
-    .replace(/\{\{prospect\.email\}\}/gi,     '')
-    .replace(/\{\{company\}\}/gi,             '{{companyName}}')
-    .replace(/\{\{title\}\}/gi,               '{{jobTitle}}')
-    .replace(/\{\{email\}\}/gi,               '')
-    .replace(/\{\{firstName\}\}/gi,           '{{firstName}}')
-    .replace(/\{\{lastName\}\}/gi,            '{{firstName}}') // no lastName in SR
-    .replace(/\{\{companyName\}\}/gi,         '{{companyName}}')
-    .replace(/\{\{jobTitle\}\}/gi,            '{{jobTitle}}');
+    .replace(/\{\{prospect\.firstName[^}]*\}\}/gi, '{{firstName}}')
+    .replace(/\{\{prospect\.lastName[^}]*\}\}/gi,  '{{firstName}}') // no lastName in SR — fall back to firstName
+    .replace(/\{\{prospect\.company[^}]*\}\}/gi,   '{{companyName}}')
+    .replace(/\{\{prospect\.title[^}]*\}\}/gi,     '{{jobTitle}}')
+    .replace(/\{\{prospect\.email[^}]*\}\}/gi,     '')
+    .replace(/\{\{company[^}]*\}\}/gi,             '{{companyName}}')
+    .replace(/\{\{title[^}]*\}\}/gi,               '{{jobTitle}}')
+    .replace(/\{\{email[^}]*\}\}/gi,               '')
+    .replace(/\{\{firstName[^}]*\}\}/gi,           '{{firstName}}')
+    .replace(/\{\{lastName[^}]*\}\}/gi,            '{{firstName}}') // no lastName in SR
+    .replace(/\{\{companyName[^}]*\}\}/gi,         '{{companyName}}')
+    .replace(/\{\{jobTitle[^}]*\}\}/gi,            '{{jobTitle}}');
   // Strip any remaining {{...}} variables not supported by SR
   return converted.replace(/\{\{[^}]+\}\}/g, '').replace(/  +/g, ' ').trim();
 }
