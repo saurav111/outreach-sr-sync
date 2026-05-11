@@ -64,20 +64,27 @@ function htmlToPlainText(html) {
     .trim();
 }
 
-// Convert Outreach template variables to SalesRobot format
+// Convert Outreach template variables to SalesRobot format.
+// SR only supports: {{firstName}}, {{companyName}}, {{jobTitle}}
+// Everything else is stripped.
 function convertVariables(text) {
   if (!text) return '';
-  return text
+  // Map known Outreach vars → SR vars
+  const converted = text
     .replace(/\{\{prospect\.firstName\}\}/gi, '{{firstName}}')
-    .replace(/\{\{prospect\.lastName\}\}/gi,  '{{lastName}}')
+    .replace(/\{\{prospect\.lastName\}\}/gi,  '{{firstName}}') // no lastName in SR — fall back to firstName
     .replace(/\{\{prospect\.company\}\}/gi,   '{{companyName}}')
     .replace(/\{\{prospect\.title\}\}/gi,     '{{jobTitle}}')
-    .replace(/\{\{prospect\.email\}\}/gi,     '{{emailId}}')
+    .replace(/\{\{prospect\.email\}\}/gi,     '')
     .replace(/\{\{company\}\}/gi,             '{{companyName}}')
     .replace(/\{\{title\}\}/gi,               '{{jobTitle}}')
-    .replace(/\{\{email\}\}/gi,               '{{emailId}}')
-    // {{firstName}}, {{lastName}} already match SR format — leave as-is
-    ;
+    .replace(/\{\{email\}\}/gi,               '')
+    .replace(/\{\{firstName\}\}/gi,           '{{firstName}}')
+    .replace(/\{\{lastName\}\}/gi,            '{{firstName}}') // no lastName in SR
+    .replace(/\{\{companyName\}\}/gi,         '{{companyName}}')
+    .replace(/\{\{jobTitle\}\}/gi,            '{{jobTitle}}');
+  // Strip any remaining {{...}} variables not supported by SR
+  return converted.replace(/\{\{[^}]+\}\}/g, '').replace(/  +/g, ' ').trim();
 }
 
 // ── File paths ────────────────────────────────────────────────────────────────
@@ -882,6 +889,33 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       } else {
         log('SEQUENCE_STEPS_ERROR', { campaignUuid, error: stepsData.message });
       }
+    }
+
+    // Add a seed prospect so the campaign initializes (duplicates off so it won't re-contact)
+    try {
+      await fetch(
+        `${SR_API_BASE}/api/add-single-prospect?campaignUuid=${campaignUuid}&linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}&checkDuplicates=false`,
+        {
+          method: 'POST',
+          headers: { 'x-api-key': srKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            profileUrl: 'https://www.linkedin.com/in/saurav-g-43b959225/',
+            firstName: 'Saurav',
+            lastName: 'G',
+            fullName: 'Saurav G',
+            emailId: '',
+            jobTitle: '',
+            companyName: '',
+            phoneNo: '',
+            profilePhoto: '',
+            salesNavUrl: null,
+          }),
+        }
+      );
+      log('SEED_PROSPECT_ADDED', { campaignUuid });
+    } catch (e) {
+      log('SEED_PROSPECT_ERROR', { campaignUuid, error: e.message });
+      // non-blocking — don't fail the whole request
     }
 
     res.json({ uuid: campaignUuid, name: sequenceName, stepsAdded });
