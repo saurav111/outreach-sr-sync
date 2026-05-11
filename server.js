@@ -83,7 +83,11 @@ function convertVariables(text) {
     .replace(/\{\{firstName[^}]*\}\}/gi,           '{{firstName}}')
     .replace(/\{\{lastName[^}]*\}\}/gi,            '{{firstName}}') // no lastName in SR
     .replace(/\{\{companyName[^}]*\}\}/gi,         '{{companyName}}')
-    .replace(/\{\{jobTitle[^}]*\}\}/gi,            '{{jobTitle}}');
+    .replace(/\{\{jobTitle[^}]*\}\}/gi,            '{{jobTitle}}')
+    // Outreach snake_case variables (actual format used in templates)
+    .replace(/\{\{first_name[^}]*\}\}/gi,          '{{firstName}}')
+    .replace(/\{\{last_name[^}]*\}\}/gi,           '{{firstName}}') // no lastName in SR
+    .replace(/\{\{job_title[^}]*\}\}/gi,           '{{jobTitle}}');
   // Strip any remaining {{...}} variables not supported by SR
   return converted.replace(/\{\{[^}]+\}\}/g, '').replace(/  +/g, ' ').trim();
 }
