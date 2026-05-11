@@ -891,6 +891,18 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       }
     }
 
+    // Start the campaign
+    try {
+      const startRes = await fetch(
+        `${SR_API_BASE}/api/start?campaignUuid=${encodeURIComponent(campaignUuid)}&hasInviteMessage=false&linkedinAccountUuid=${encodeURIComponent(linkedinAccountUuid)}`,
+        { method: 'POST', headers: { 'x-api-key': srKey, 'Content-Type': 'application/json' } }
+      );
+      const startData = await startRes.json();
+      log('CAMPAIGN_STARTED', { campaignUuid, success: startData.success, message: startData.message });
+    } catch (e) {
+      log('CAMPAIGN_START_ERROR', { campaignUuid, error: e.message });
+    }
+
     // Add a seed prospect so the campaign initializes (duplicates off so it won't re-contact)
     try {
       await fetch(
