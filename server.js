@@ -1306,6 +1306,22 @@ async function runAutoSync() {
 setInterval(runAutoSync, POLL_INTERVAL_MS);
 setTimeout(runAutoSync, 60_000);
 
+// Proactively refresh Outreach tokens for all profiles every 90 minutes,
+// regardless of auto-sync status — prevents 401s from idle token expiry
+async function refreshAllTokens() {
+  const profiles = readJson(PROFILES_FILE, []);
+  const withToken = profiles.filter(p => p.outreachRefreshToken);
+  for (const profile of withToken) {
+    try {
+      await getValidToken(profile);
+      log('TOKEN_KEEPALIVE', { id: profile.id, name: profile.name });
+    } catch (e) {
+      log('TOKEN_KEEPALIVE_FAILED', { id: profile.id, name: profile.name, error: e.message });
+    }
+  }
+}
+setInterval(refreshAllTokens, 90 * 60 * 1000); // every 90 minutes
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   const line = `Outreach → SalesRobot sync running on http://localhost:${PORT}\n`;
