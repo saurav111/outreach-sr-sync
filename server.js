@@ -46,6 +46,24 @@ const OUTREACH_TO_SR_STEP = {
   'linkedin_other':                   'SEND_MESSAGE',
 };
 
+// Strip HTML tags and decode common HTML entities → plaintext
+function htmlToPlainText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // Convert Outreach template variables to SalesRobot format
 function convertVariables(text) {
   if (!text) return '';
@@ -824,9 +842,10 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       }
     }
 
-    // Resolve body for each step
+    // Resolve body for each step: strip HTML, then convert Outreach vars → SR vars
     for (const step of allSteps) {
-      step.body = step.templateIds.map(id => templateMap[id] || '').filter(Boolean).join(' ') || '';
+      const raw = step.templateIds.map(id => templateMap[id] || '').filter(Boolean).join(' ');
+      step.body = convertVariables(htmlToPlainText(raw));
     }
 
     allSteps.sort((a, b) => a.order - b.order);
@@ -839,7 +858,7 @@ app.post('/api/auto-create-campaign', async (req, res) => {
         hoursDelay:       i === 0 ? 0 : Math.round((step.interval || 86400) / 3600), // seconds → hours
         sequenceStepType: OUTREACH_TO_SR_STEP[step.action] || 'SEND_MESSAGE',
         stepOrdinal:      i + 1,
-        multiVariateMails: [{ body: convertVariables(step.body) }],
+        multiVariateMails: [{ body: step.body }],
       }));
 
       const stepsRes = await fetch(
