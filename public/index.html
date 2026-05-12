@@ -1045,6 +1045,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            profileId: state.currentProfileId,
             profileName: document.getElementById('profileSelect').options[document.getElementById('profileSelect').selectedIndex]?.text || 'Unknown',
             linkedinAccountName: state.linkedinAccountName,
             results,
@@ -1137,7 +1138,8 @@
     // ── History ───────────────────────────────────────────────────────────────
     async function loadHistory() {
       try {
-        const res = await fetch('/api/history');
+        const url = state.currentProfileId ? `/api/history?profileId=${encodeURIComponent(state.currentProfileId)}` : '/api/history';
+        const res = await fetch(url);
         const data = await res.json();
         const runs = data.runs || [];
         const el = document.getElementById('historyList');

@@ -1146,19 +1146,22 @@ app.get('/api/autosync/status', (_req, res) => {
 
 // ── History ───────────────────────────────────────────────────────────────────
 
-app.get('/api/history', (_req, res) => {
-  const runs = readJson(HISTORY_FILE, []);
+app.get('/api/history', (req, res) => {
+  const { profileId } = req.query;
+  let runs = readJson(HISTORY_FILE, []);
+  if (profileId) runs = runs.filter(r => r.profileId === profileId);
   res.json({ runs: runs.slice().reverse().slice(0, 100) });
 });
 
 app.post('/api/history', (req, res) => {
-  const { profileName, linkedinAccountName, connectCampaign, messageCampaign, results } = req.body;
+  const { profileId, profileName, linkedinAccountName, connectCampaign, messageCampaign, results } = req.body;
   if (!results) return res.status(400).json({ error: 'results required' });
   const runs = readJson(HISTORY_FILE, []);
   const succeeded = results.filter(r => r.success).length;
   const run = {
     id: 'h' + Date.now(),
     timestamp: new Date().toISOString(),
+    profileId: profileId || null,
     profileName: profileName || 'Unknown',
     linkedinAccountName: linkedinAccountName || '',
     connectCampaign: connectCampaign || '',
@@ -1273,6 +1276,7 @@ async function runAutoSyncForProfile(profile) {
       runs.push({
         id: 'h' + Date.now(),
         timestamp: new Date().toISOString(),
+        profileId: profile.id,
         profileName: profile.name,
         linkedinAccountName: profile.linkedinAccountName || '',
         mappedSequences: Object.keys(mappings).length,
