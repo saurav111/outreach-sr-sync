@@ -299,11 +299,13 @@ function outreachHeaders(token) {
 
 // Fetch all incomplete LinkedIn tasks, include prospect and sequence data per task
 async function fetchOutreachLinkedInTasks(token) {
-  const allTasks   = [];
+  const allTasks    = [];
   const prospectMap = {};
   const sequenceMap = {};
   let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?include=prospect,sequence&page[size]=100`;
   let page = 0;
+  let rawTotal = 0;
+  const actionCounts = {};
 
   while (nextUrl && page < 20) {
     page++;
@@ -317,8 +319,14 @@ async function fetchOutreachLinkedInTasks(token) {
     }
 
     for (const task of (data.data || [])) {
-      if (task.attributes?.completed) continue;
-      if (!LINKEDIN_ACTIONS.has(task.attributes?.action)) continue;
+      rawTotal++;
+      const action = task.attributes?.action || '(none)';
+      const completed = task.attributes?.completed;
+      const key = completed ? `${action} [completed]` : action;
+      actionCounts[key] = (actionCounts[key] || 0) + 1;
+
+      if (completed) continue;
+      if (!LINKEDIN_ACTIONS.has(action)) continue;
       const prospectId = task.relationships?.prospect?.data?.id;
       const sequenceId = task.relationships?.sequence?.data?.id;
       allTasks.push({
@@ -333,7 +341,7 @@ async function fetchOutreachLinkedInTasks(token) {
     nextUrl = data.links?.next || null;
   }
 
-  log('OUTREACH_TASKS_FETCHED', { total: allTasks.length });
+  log('OUTREACH_TASKS_FETCHED', { pages: page, rawTotal, linkedInFiltered: allTasks.length, actionCounts });
   return allTasks;
 }
 
