@@ -302,10 +302,7 @@ async function fetchOutreachLinkedInTasks(token) {
   const allTasks    = [];
   const prospectMap = {};
   const sequenceMap = {};
-  // Outreach returns 400 on filter[state] and filter[owner][id] despite docs claiming support.
-  // Use sort=completedAt so null completedAt (incomplete) tasks sort first, then exit early
-  // once we hit a full page of completed tasks.
-  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?sort=completedAt&include=prospect,sequence&page[size]=100`;
+  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?include=prospect,sequence&page[size]=100`;
   let page = 0;
   let rawTotal = 0;
   const actionCounts = {};
@@ -322,11 +319,6 @@ async function fetchOutreachLinkedInTasks(token) {
     }
 
     const pageTasks = data.data || [];
-    // With sort=completedAt asc, once a full page is all-completed there are no more open tasks
-    if (pageTasks.length > 0 && pageTasks.every(t => t.attributes?.completed)) {
-      log('OUTREACH_TASKS_EARLY_EXIT', { page, rawTotal });
-      break;
-    }
     for (const task of pageTasks) {
       rawTotal++;
       const action = task.attributes?.action || '(none)';
