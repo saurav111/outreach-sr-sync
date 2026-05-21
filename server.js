@@ -302,7 +302,7 @@ async function fetchOutreachLinkedInTasks(token) {
   const allTasks    = [];
   const prospectMap = {};
   const sequenceMap = {};
-  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?include=prospect,sequence&page[size]=100&sort=completedAt`;
+  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?filter[completed]=false&include=prospect,sequence&page[size]=100`;
   let page = 0;
   let rawTotal = 0;
   const actionCounts = {};
@@ -319,8 +319,6 @@ async function fetchOutreachLinkedInTasks(token) {
     }
 
     const pageTasks = data.data || [];
-    // If every task on this page is completed, all remaining pages will be too (sorted by completedAt asc)
-    const allCompletedOnPage = pageTasks.length > 0 && pageTasks.every(t => t.attributes?.completed);
     for (const task of pageTasks) {
       rawTotal++;
       const action = task.attributes?.action || '(none)';
@@ -341,10 +339,6 @@ async function fetchOutreachLinkedInTasks(token) {
       });
     }
 
-    if (allCompletedOnPage) {
-      log('OUTREACH_TASKS_EARLY_EXIT', { page, rawTotal, reason: 'all tasks on page completed — no more open tasks' });
-      break;
-    }
     nextUrl = data.links?.next || null;
   }
 
