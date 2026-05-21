@@ -298,12 +298,14 @@ function outreachHeaders(token) {
 }
 
 // Fetch all incomplete LinkedIn tasks, include prospect and sequence data per task
-async function fetchOutreachLinkedInTasks(token, userId) {
+async function fetchOutreachLinkedInTasks(token) {
   const allTasks    = [];
   const prospectMap = {};
   const sequenceMap = {};
-  const ownerFilter = userId ? `&filter[owner][id]=${encodeURIComponent(userId)}` : '';
-  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?filter[state]=incomplete${ownerFilter}&include=prospect,sequence&page[size]=100`;
+  // Outreach returns 400 on filter[state] and filter[owner][id] despite docs claiming support.
+  // Use sort=completedAt so null completedAt (incomplete) tasks sort first, then exit early
+  // once we hit a full page of completed tasks.
+  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?sort=completedAt&include=prospect,sequence&page[size]=100`;
   let page = 0;
   let rawTotal = 0;
   const actionCounts = {};
@@ -320,6 +322,11 @@ async function fetchOutreachLinkedInTasks(token, userId) {
     }
 
     const pageTasks = data.data || [];
+    // With sort=completedAt asc, once a full page is all-completed there are no more open tasks
+    if (pageTasks.length > 0 && pageTasks.every(t => t.attributes?.completed)) {
+      log('OUTREACH_TASKS_EARLY_EXIT', { page, rawTotal });
+      break;
+    }
     for (const task of pageTasks) {
       rawTotal++;
       const action = task.attributes?.action || '(none)';
@@ -451,7 +458,7 @@ app.post('/api/outreach/tasks', async (req, res) => {
   if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
 
   try {
-    const items = await fetchOutreachLinkedInTasks(accessToken, outreachUserId);
+    const items = await fetchOutreachLinkedInTasks(accessToken);
     const mappings = sequenceMappings || {};
 
     const tasks = items.map(({ task, prospect, sequenceId, sequenceName }) => {
@@ -1225,7 +1232,7 @@ async function runAutoSyncForProfile(profile) {
     const syncedSet = new Set(Object.keys(synced));
 
     // Fetch all incomplete LinkedIn tasks with sequence data
-    const items   = await fetchOutreachLinkedInTasks(token, profile.outreachUserId);
+    const items   = await fetchOutreachLinkedInTasks(token);
     const newItems = items.filter(({ task }) => !syncedSet.has(String(task.id)));
 
     log('AUTOSYNC_NEW_TASKS', { profileId: profile.id, total: items.length, new: newItems.length });
