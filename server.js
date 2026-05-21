@@ -298,11 +298,12 @@ function outreachHeaders(token) {
 }
 
 // Fetch all incomplete LinkedIn tasks, include prospect and sequence data per task
-async function fetchOutreachLinkedInTasks(token) {
+async function fetchOutreachLinkedInTasks(token, userId) {
   const allTasks    = [];
   const prospectMap = {};
   const sequenceMap = {};
-  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?filter[completed]=false&include=prospect,sequence&page[size]=100`;
+  const ownerFilter = userId ? `&filter[owner][id]=${encodeURIComponent(userId)}` : '';
+  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?filter[state]=incomplete${ownerFilter}&include=prospect,sequence&page[size]=100`;
   let page = 0;
   let rawTotal = 0;
   const actionCounts = {};
@@ -446,11 +447,11 @@ app.post('/api/outreach/sequences', async (req, res) => {
 
 // Fetch incomplete LinkedIn tasks with sequence info resolved against the mapping
 app.post('/api/outreach/tasks', async (req, res) => {
-  const { accessToken, sequenceMappings } = req.body;
+  const { accessToken, sequenceMappings, outreachUserId } = req.body;
   if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
 
   try {
-    const items = await fetchOutreachLinkedInTasks(accessToken);
+    const items = await fetchOutreachLinkedInTasks(accessToken, outreachUserId);
     const mappings = sequenceMappings || {};
 
     const tasks = items.map(({ task, prospect, sequenceId, sequenceName }) => {
@@ -1223,7 +1224,7 @@ async function runAutoSyncForProfile(profile) {
     const syncedSet = new Set(Object.keys(synced));
 
     // Fetch all incomplete LinkedIn tasks with sequence data
-    const items   = await fetchOutreachLinkedInTasks(token);
+    const items   = await fetchOutreachLinkedInTasks(token, profile.outreachUserId);
     const newItems = items.filter(({ task }) => !syncedSet.has(String(task.id)));
 
     log('AUTOSYNC_NEW_TASKS', { profileId: profile.id, total: items.length, new: newItems.length });

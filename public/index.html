@@ -925,7 +925,7 @@
         const res = await fetch('/api/outreach/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accessToken: state.outreachAccessToken, sequenceMappings: state.sequenceMappings }),
+          body: JSON.stringify({ accessToken: state.outreachAccessToken, sequenceMappings: state.sequenceMappings, outreachUserId: state.outreachUserId }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
