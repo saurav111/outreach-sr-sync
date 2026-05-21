@@ -410,7 +410,7 @@ app.post('/api/outreach/sequences', async (req, res) => {
     let nextUrl = `${OUTREACH_BASE}/api/v2/sequences?page[size]=100`;
     let page = 0;
 
-    while (nextUrl && page < 10) {
+    while (nextUrl && page < 50) {
       page++;
       const r = await fetch(nextUrl, { headers: outreachHeaders(accessToken) });
       const data = await safeJson(r);
@@ -424,10 +424,11 @@ app.post('/api/outreach/sequences', async (req, res) => {
           enabled: a.enabled ?? true,
         });
       }
+      log('SEQUENCES_PAGE', { page, pageCount: (data.data || []).length, total: allSequences.length, hasNext: !!data.links?.next });
       nextUrl = data.links?.next || null;
     }
 
-    log('SEQUENCES_FETCHED', { count: allSequences.length });
+    log('SEQUENCES_FETCHED', { pages: page, count: allSequences.length });
     res.json({ sequences: allSequences });
   } catch (e) {
     res.status(500).json({ error: e.message });
