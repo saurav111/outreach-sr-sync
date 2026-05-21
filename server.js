@@ -302,12 +302,12 @@ async function fetchOutreachLinkedInTasks(token) {
   const allTasks    = [];
   const prospectMap = {};
   const sequenceMap = {};
-  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?include=prospect,sequence&page[size]=100`;
+  let nextUrl = `${OUTREACH_BASE}/api/v2/tasks?include=prospect,sequence&page[size]=100&sort=completedAt`;
   let page = 0;
   let rawTotal = 0;
   const actionCounts = {};
 
-  while (nextUrl && page < 20) {
+  while (nextUrl && page < 100) {
     page++;
     const r = await fetch(nextUrl, { headers: outreachHeaders(token) });
     const data = await safeJson(r);
@@ -318,7 +318,10 @@ async function fetchOutreachLinkedInTasks(token) {
       if (inc.type === 'sequence') sequenceMap[inc.id] = inc.attributes || {};
     }
 
-    for (const task of (data.data || [])) {
+    const pageTasks = data.data || [];
+    // If every task on this page is completed, all remaining pages will be too (sorted by completedAt asc)
+    const allCompletedOnPage = pageTasks.length > 0 && pageTasks.every(t => t.attributes?.completed);
+    for (const task of pageTasks) {
       rawTotal++;
       const action = task.attributes?.action || '(none)';
       const completed = task.attributes?.completed;
@@ -338,6 +341,10 @@ async function fetchOutreachLinkedInTasks(token) {
       });
     }
 
+    if (allCompletedOnPage) {
+      log('OUTREACH_TASKS_EARLY_EXIT', { page, rawTotal, reason: 'all tasks on page completed — no more open tasks' });
+      break;
+    }
     nextUrl = data.links?.next || null;
   }
 
