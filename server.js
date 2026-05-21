@@ -482,8 +482,9 @@ app.post('/api/outreach/tasks', async (req, res) => {
       };
     });
 
-    log('OUTREACH_TASKS', { total: tasks.length });
-    res.json({ tasks });
+    const mappedTasks = tasks.filter(t => t.srCampaignUuid);
+    log('OUTREACH_TASKS', { total: tasks.length, mapped: mappedTasks.length });
+    res.json({ tasks: mappedTasks });
   } catch (e) {
     log('OUTREACH_TASKS_ERROR', { error: e.message });
     res.status(500).json({ error: e.message });
