@@ -855,14 +855,16 @@ app.post('/api/auto-create-campaign', async (req, res) => {
       }
     }
 
-    // Resolve body for each step: strip HTML, then convert Outreach vars → SR vars
+    // Resolve variants for each step: each templateId becomes a separate multiVariateMail entry
     for (const step of allSteps) {
-      const raw = step.templateIds.map(id => templateMap[id] || '').filter(Boolean).join(' ');
-      step.body = convertVariables(htmlToPlainText(raw));
+      step.variants = step.templateIds
+        .map(id => convertVariables(htmlToPlainText(templateMap[id] || '')))
+        .filter(Boolean);
+      if (step.variants.length === 0) step.variants = [''];
     }
 
     allSteps.sort((a, b) => a.order - b.order);
-    log('SEQUENCE_STEPS_FETCHED', { sequenceId, sequenceName, linkedInSteps: allSteps.length, steps: allSteps });
+    log('SEQUENCE_STEPS_FETCHED', { sequenceId, sequenceName, linkedInSteps: allSteps.length, steps: allSteps.map(s => ({ ...s, body: s.variants[0]?.slice(0, 80) })) });
 
     // 3. Add steps to SR campaign (only if there are LinkedIn steps)
     let stepsAdded = 0;
@@ -871,7 +873,7 @@ app.post('/api/auto-create-campaign', async (req, res) => {
         hoursDelay:       i === 0 ? 0 : Math.round((step.interval || 86400) / 3600), // seconds → hours
         sequenceStepType: OUTREACH_TO_SR_STEP[step.action] || 'SEND_MESSAGE',
         stepOrdinal:      i + 1,
-        multiVariateMails: [{ body: step.body }],
+        multiVariateMails: step.variants.map(body => ({ body })),
       }));
 
       const stepsRes = await fetch(
