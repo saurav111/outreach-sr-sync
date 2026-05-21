@@ -190,6 +190,7 @@
       </button>
 
       <div id="taskList" class="hidden space-y-2"></div>
+      <div id="taskPagination" class="hidden flex items-center justify-between text-sm text-gray-500"></div>
 
       <div id="syncActions" class="hidden space-y-3">
         <div class="flex items-center justify-between text-sm">
@@ -929,7 +930,8 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        state.tasks = data.tasks || [];
+        state.tasks    = data.tasks || [];
+        taskCurrentPage = 1;
         renderTaskList();
       } catch (e) {
         showError('step3Error', e.message);
@@ -939,26 +941,33 @@
       }
     }
 
+    const TASK_PAGE_SIZE = 20;
+    let taskCurrentPage  = 1;
+
     function renderTaskList() {
-      const tasks   = state.tasks;
-      const listEl  = document.getElementById('taskList');
+      const tasks     = state.tasks;
+      const listEl    = document.getElementById('taskList');
+      const pagEl     = document.getElementById('taskPagination');
       const actionsEl = document.getElementById('syncActions');
       const summaryEl = document.getElementById('taskSummary');
 
       if (!tasks.length) {
-        listEl.innerHTML = '<p class="text-sm text-gray-400">No incomplete LinkedIn tasks found.</p>';
+        listEl.innerHTML = '<p class="text-sm text-gray-400">No incomplete LinkedIn tasks found for mapped sequences.</p>';
         listEl.classList.remove('hidden');
+        pagEl.classList.add('hidden');
         actionsEl.classList.add('hidden');
         return;
       }
 
-      const mapped   = tasks.filter(t => t.srCampaignUuid).length;
-      const unmapped = tasks.length - mapped;
+      const totalPages = Math.ceil(tasks.length / TASK_PAGE_SIZE);
+      taskCurrentPage  = Math.min(taskCurrentPage, totalPages);
+      const start = (taskCurrentPage - 1) * TASK_PAGE_SIZE;
+      const page  = tasks.slice(start, start + TASK_PAGE_SIZE);
 
-      listEl.innerHTML = tasks.slice(0, 20).map(t => {
+      listEl.innerHTML = page.map(t => {
         const p = t.prospect;
         const noLi  = !p.linkedInUrl    ? ' <span class="text-xs text-red-400">(no LinkedIn URL)</span>' : '';
-        const noMap = !t.srCampaignUuid ? ' <span class="text-xs text-amber-500">(no campaign mapped)</span>' : '';
+        const noMap = !t.srCampaignUuid ? ' <span class="text-xs text-amber-500">(no campaign)</span>' : '';
         const seqLabel = t.sequenceName || 'No sequence';
         const seqColor = t.srCampaignUuid ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500';
         return `<div class="flex items-start gap-3 py-2 border-b border-gray-100 last:border-0">
@@ -969,12 +978,31 @@
           </div>
         </div>`;
       }).join('');
-      if (tasks.length > 20) {
-        listEl.innerHTML += `<p class="text-xs text-gray-400 py-2">… and ${tasks.length - 20} more</p>`;
-      }
       listEl.classList.remove('hidden');
+
+      // Pagination controls
+      if (totalPages > 1) {
+        pagEl.innerHTML = `
+          <button onclick="taskGoPage(${taskCurrentPage - 1})" ${taskCurrentPage === 1 ? 'disabled' : ''}
+            class="px-2 py-1 rounded border border-gray-200 text-xs disabled:opacity-40 hover:bg-gray-50">← Prev</button>
+          <span class="text-xs">${start + 1}–${Math.min(start + TASK_PAGE_SIZE, tasks.length)} of ${tasks.length}</span>
+          <button onclick="taskGoPage(${taskCurrentPage + 1})" ${taskCurrentPage === totalPages ? 'disabled' : ''}
+            class="px-2 py-1 rounded border border-gray-200 text-xs disabled:opacity-40 hover:bg-gray-50">Next →</button>`;
+        pagEl.classList.remove('hidden');
+      } else {
+        pagEl.classList.add('hidden');
+      }
+
+      const mapped   = tasks.filter(t => t.srCampaignUuid).length;
+      const unmapped = tasks.length - mapped;
       summaryEl.textContent = `${tasks.length} task${tasks.length !== 1 ? 's' : ''}: ${mapped} mapped, ${unmapped} without campaign`;
       actionsEl.classList.remove('hidden');
+    }
+
+    function taskGoPage(p) {
+      taskCurrentPage = p;
+      renderTaskList();
+      document.getElementById('taskList').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     async function syncTasks() {
